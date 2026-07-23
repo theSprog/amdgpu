@@ -657,7 +657,7 @@ STATIC_IFN_KUNIT bool amdgpu_dm_crtc_helper_mode_fixup(struct drm_crtc *crtc,
 }
 EXPORT_IF_KUNIT(amdgpu_dm_crtc_helper_mode_fixup);
 
-static int amdgpu_dm_crtc_helper_atomic_check(struct drm_crtc *crtc,
+STATIC_IFN_KUNIT int amdgpu_dm_crtc_helper_atomic_check(struct drm_crtc *crtc,
 #ifdef HAVE_DRM_CRTC_HELPER_FUNCS_ATOMIC_CHECK_ARG_DRM_ATOMIC_STATE
 					      struct drm_atomic_commit *state)
 {
@@ -730,6 +730,7 @@ static int amdgpu_dm_crtc_helper_atomic_check(struct drm_crtc *crtc,
 	DRM_DEBUG_ATOMIC("Failed DC stream validation\n");
 	return ret;
 }
+EXPORT_IF_KUNIT(amdgpu_dm_crtc_helper_atomic_check);
 
 static const struct drm_crtc_helper_funcs amdgpu_dm_crtc_helper_funcs = {
 	.disable = amdgpu_dm_crtc_helper_disable,
