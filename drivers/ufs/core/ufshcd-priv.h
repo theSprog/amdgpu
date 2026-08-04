@@ -34,6 +34,12 @@ static inline bool ufshcd_is_wb_buf_flush_allowed(struct ufs_hba *hba)
 		!(hba->quirks & UFSHCI_QUIRK_SKIP_MANUAL_WB_FLUSH_CTRL);
 }
 
+static inline bool ufshcd_is_wb_exception_event_allowed(struct ufs_hba *hba)
+{
+	return ufshcd_is_wb_allowed(hba) &&
+		(hba->quirks & UFSHCI_QUIRK_ENABLE_WB_EXCEPTION_EVENT_CTRL);
+}
+
 #ifdef CONFIG_SCSI_UFS_HWMON
 void ufs_hwmon_probe(struct ufs_hba *hba, u8 mask);
 void ufs_hwmon_remove(struct ufs_hba *hba);
@@ -83,6 +89,7 @@ void ufshcd_release_scsi_cmd(struct ufs_hba *hba, struct scsi_cmnd *cmd);
 int ufshcd_pause_command_processing(struct ufs_hba *hba, u64 timeout_us);
 void ufshcd_resume_command_processing(struct ufs_hba *hba);
 int ufshcd_scale_clks(struct ufs_hba *hba, unsigned long freq, bool scale_up);
+int ufshcd_abort_and_requeue_cmd(struct ufs_hba *hba);
 
 /**
  * enum ufs_descr_fmt - UFS string descriptor format

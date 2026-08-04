@@ -39,6 +39,7 @@
 #if IS_ENABLED(CONFIG_HSA_AMD)
 #include "kfd_priv.h"
 #endif
+#include "kfd_svm.h"
 
 /* Total memory size in system memory and all GPU VRAM. Used to
  * estimate worst case amount of memory to reserve for page tables

@@ -402,6 +402,9 @@ static void ufshcd_configure_wb(struct ufs_hba *hba)
 
 	ufshcd_wb_toggle_buf_flush_during_h8(hba, true);
 
+	if (ufshcd_is_wb_exception_event_allowed(hba))
+		return;
+
 	if (ufshcd_is_wb_buf_flush_allowed(hba))
 		ufshcd_wb_toggle_buf_flush(hba, true);
 }
@@ -6187,6 +6190,16 @@ static inline int ufshcd_get_ee_status(struct ufs_hba *hba, u32 *status)
 			QUERY_ATTR_IDN_EE_STATUS, 0, 0, status);
 }
 
+static void ufshcd_wb_flush_needed_exception_event_handler(struct ufs_hba *hba)
+{
+	int ret;
+
+	ret = ufshcd_wb_toggle_buf_flush(hba, true);
+	if (ret)
+		dev_err(hba->dev, "%s: failed to enable WB flush %d\n",
+			__func__, ret);
+}
+
 static void ufshcd_bkops_exception_event_handler(struct ufs_hba *hba)
 {
 	int err;
@@ -6508,6 +6521,9 @@ static void ufshcd_exception_event_handler(struct work_struct *work)
 		atomic_inc(&hba->dev_lvl_exception_count);
 		sysfs_notify(&hba->dev->kobj, NULL, "device_lvl_exception_count");
 	}
+
+	if (status & hba->ee_drv_mask & MASK_EE_WRITEBOOSTER_EVENT)
+		ufshcd_wb_flush_needed_exception_event_handler(hba);
 
 	ufs_debugfs_exception_event(hba, status);
 }
@@ -7849,6 +7865,36 @@ static int ufshcd_eh_device_reset_handler(struct scsi_cmnd *cmd)
 	return err;
 }
 
+/*
+ * ufshcd_abort_and_requeue_cmd - Aborts in-flight commands
+ * @hba: UFS host
+ *
+ * Waits for in-flight commands to complete; if any remain, aborts them so
+ * the block layer can requeue them.
+ *
+ * Return: 0 if clean/aborted, -EBUSY if I/O could not be aborted
+ */
+int ufshcd_abort_and_requeue_cmd(struct ufs_hba *hba)
+{
+	int ret;
+
+	ret = ufshcd_wait_for_pending_cmds(hba, USEC_PER_SEC);
+	if (!ret) {
+		dev_dbg(hba->dev, "no I/O inflight after 1s wait\n");
+		return 0;
+	}
+
+	dev_dbg(hba->dev, "pending inflight: %d, outstanding reqs: %lx after wait\n",
+		 scsi_host_busy(hba->host), hba->outstanding_reqs);
+
+	if (ufshcd_abort_all(hba)) {
+		dev_err(hba->dev, "%s: abort all failed\n", __func__);
+		return -EBUSY;
+	}
+
+	return 0;
+}
+
 static void ufshcd_set_req_abort_skip(struct ufs_hba *hba, unsigned long bitmap)
 {
 	int tag;
@@ -8446,6 +8492,7 @@ static void ufshcd_wb_probe(struct ufs_hba *hba, const u8 *desc_buf)
 	u8 lun;
 	u32 d_lu_wb_buf_alloc;
 	u32 ext_ufs_feature;
+	int err;
 
 	if (!ufshcd_is_wb_allowed(hba))
 		return;
@@ -8503,6 +8550,19 @@ static void ufshcd_wb_probe(struct ufs_hba *hba, const u8 *desc_buf)
 
 	if (!ufshcd_is_wb_buf_lifetime_available(hba))
 		goto wb_disabled;
+
+	if (ufshcd_is_wb_exception_event_allowed(hba)) {
+		err = ufshcd_enable_ee(hba, MASK_EE_WRITEBOOSTER_EVENT);
+		if (err) {
+			dev_err(hba->dev, "%s: failed to configure WB exception event %d\n",
+				__func__, err);
+			/*
+			 * Event mechanism unavailable; fall back to always-on
+			 * manual flush so WB can still drain on demand.
+			 */
+			ufshcd_wb_toggle_buf_flush(hba, true);
+		}
+	}
 
 	return;
 
@@ -10233,6 +10293,15 @@ static int __ufshcd_wl_suspend(struct ufs_hba *hba, enum ufs_pm_op pm_op)
 	}
 
 	if (pm_op == UFS_RUNTIME_PM) {
+		/*
+		 * Manual WB flush handles draining during active I/O. At
+		 * runtime suspend the link enters H8 where H8 flush takes
+		 * over, so disable manual flush.
+		 */
+		if (ufshcd_is_wb_exception_event_allowed(hba) &&
+		    hba->dev_info.wb_buf_flush_enabled)
+			ufshcd_wb_toggle_buf_flush(hba, false);
+
 		if (ufshcd_can_autobkops_during_suspend(hba)) {
 			/*
 			 * The device is idle with no requests in the queue,
