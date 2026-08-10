@@ -4090,8 +4090,10 @@ void amdgpu_dm_update_freesync_caps(struct drm_connector *connector,
 	if (sink->edid_caps.panel_patch.force_freesync_min_hz && freesync_capable) {
 		amdgpu_dm_connector->min_vfreq =
 			sink->edid_caps.panel_patch.force_freesync_min_hz;
+#ifdef HAVE_DRM_DISPLAY_INFO_MONITOR_RANGE
 		connector->display_info.monitor_range.min_vfreq =
 			amdgpu_dm_connector->min_vfreq;
+#endif
 	}
 
 	/* Handle MCCS */
