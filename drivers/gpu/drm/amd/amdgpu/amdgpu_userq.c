@@ -287,22 +287,24 @@ static bool amdgpu_userq_buffer_va_mapped(struct amdgpu_vm *vm, u64 addr)
 
 static bool amdgpu_userq_buffer_vas_mapped(struct amdgpu_usermode_queue *queue)
 {
-	int i, r = 0;
+	int i;
+	bool mapped;
 
 	for (i = 0; i < ARRAY_SIZE(queue->userq_vas.va_array); i++) {
 		if (!queue->userq_vas.va_array[i])
 			continue;
-		r += amdgpu_userq_buffer_va_mapped(queue->vm,
+
+		mapped = amdgpu_userq_buffer_va_mapped(queue->vm,
 						   queue->userq_vas.va_array[i]);
 		dev_dbg(queue->userq_mgr->adev->dev,
 			"validate the userq mapping:%p va:%llx r:%d\n",
-			queue, queue->userq_vas.va_array[i], r);
+			queue, queue->userq_vas.va_array[i], mapped);
+
+		if (!mapped)
+			return false;
 	}
 
-	if (r != 0)
-		return true;
-
-	return false;
+	return true;
 }
 
 
@@ -1079,6 +1081,15 @@ retry_lock:
 	if (ret)
 		goto unlock_all;
 
+	/*
+	 * PRT/sparse mappings are kept off the vm_bo state lists, so
+	 * amdgpu_vm_handle_moved() does not touch them. Refresh their PTEs
+	 * explicitly here (as the CS path does) so sparse mappings survive a
+	 * VRAM-lost reset.
+	 */
+	ret = amdgpu_vm_bo_update(adev, fpriv->prt_va, false);
+	if (ret)
+		goto unlock_all;
 #ifdef HAVE_AMDKCL_HMM_MIRROR_ENABLED
 	key = 0;
 	/* Validate User Ptr BOs */
@@ -1138,6 +1149,12 @@ retry_lock:
 	 */
 	list_for_each_entry(bo_va, &vm->always_valid.idle, base.vm_status)
 		dma_fence_wait(bo_va->last_pt_update, false);
+	/*
+	 * The PRT bo_va is kept off the state lists, so its PTE update fence
+	 * lands in prt_va->last_pt_update rather than vm->last_update; wait on
+	 * it explicitly (as the CS path syncs it) before restarting queues.
+	 */
+	dma_fence_wait(fpriv->prt_va->last_pt_update, false);
 	dma_fence_wait(vm->last_update, false);
 
 	xa_for_each(&uq_mgr->userq_xa, tmp_key, queue) {

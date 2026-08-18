@@ -60,7 +60,8 @@ enum dc_color_space_type {
 	COLOR_SPACE_RGB_LIMITED_TYPE,
 	COLOR_SPACE_YCBCR601_TYPE,
 	COLOR_SPACE_YCBCR709_TYPE,
-	COLOR_SPACE_YCBCR2020_TYPE,
+	COLOR_SPACE_YCBCR2020_LIMITED_TYPE,
+	COLOR_SPACE_YCBCR2020_FULL_TYPE,
 	COLOR_SPACE_YCBCR601_LIMITED_TYPE,
 	COLOR_SPACE_YCBCR709_LIMITED_TYPE,
 	COLOR_SPACE_YCBCR709_BLACK_TYPE,
@@ -112,9 +113,15 @@ static const struct out_csc_color_matrix_type output_csc_matrix[] = {
 		{ 0xE00, 0xF349, 0xFEB7, 0x1000,
 		  0x6CE, 0x16E3, 0x24F,  0x200,
 		  0xFCCB, 0xF535, 0xE00, 0x1000} },
-	{ COLOR_SPACE_YCBCR2020_TYPE,
+	/* Corrected. Not included in the TODO above. */
+	{ COLOR_SPACE_YCBCR2020_LIMITED_TYPE,
+		{ 0x0E04, 0xF31D, 0xFEDF, 0x1004,
+		  0x0733, 0x1294, 0x01A0, 0x0201,
+		  0xFC16, 0xF5E6, 0x0E04, 0x1004} },
+	/* Corrected. Not included in the TODO above. */
+	{ COLOR_SPACE_YCBCR2020_FULL_TYPE,
 		{ 0x1000, 0xF149, 0xFEB7, 0x1004,
-		  0x0868, 0x15B2, 0x01E6, 0x201,
+		  0x0868, 0x15B2, 0x01E6, 0,
 		  0xFB88, 0xF478, 0x1000, 0x1004} },
 	{ COLOR_SPACE_YCBCR709_BLACK_TYPE,
 		{ 0x0000, 0x0000, 0x0000, 0x1000,
@@ -181,14 +188,14 @@ static bool is_ycbcr709_type(
 	return ret;
 }
 
-static bool is_ycbcr2020_type(
-	enum dc_color_space color_space)
+static bool is_ycbcr2020_limited_type(enum dc_color_space color_space)
 {
-	bool ret = false;
+	return color_space == COLOR_SPACE_2020_YCBCR_LIMITED;
+}
 
-	if (color_space == COLOR_SPACE_2020_YCBCR_LIMITED || color_space == COLOR_SPACE_2020_YCBCR_FULL)
-		ret = true;
-	return ret;
+static bool is_ycbcr2020_full_type(enum dc_color_space color_space)
+{
+	return color_space == COLOR_SPACE_2020_YCBCR_FULL;
 }
 
 static bool is_ycbcr709_limited_type(
@@ -217,8 +224,10 @@ static enum dc_color_space_type get_color_space_type(enum dc_color_space color_s
 		type = COLOR_SPACE_YCBCR601_LIMITED_TYPE;
 	else if (is_ycbcr709_limited_type(color_space))
 		type = COLOR_SPACE_YCBCR709_LIMITED_TYPE;
-	else if (is_ycbcr2020_type(color_space))
-		type = COLOR_SPACE_YCBCR2020_TYPE;
+	else if (is_ycbcr2020_limited_type(color_space))
+		type = COLOR_SPACE_YCBCR2020_LIMITED_TYPE;
+	else if (is_ycbcr2020_full_type(color_space))
+		type = COLOR_SPACE_YCBCR2020_FULL_TYPE;
 	else if (color_space == COLOR_SPACE_YCBCR709)
 		type = COLOR_SPACE_YCBCR709_BLACK_TYPE;
 	else if (color_space == COLOR_SPACE_YCBCR709_BLACK)
@@ -745,6 +754,38 @@ static bool get_update_dchubp_dpp_flags_status(struct pipe_ctx *pipe)
 	return false;
 }
 
+static void calc_vline_position(
+		struct dc *dc,
+		struct pipe_ctx *pipe_ctx,
+		uint32_t *start_line,
+		uint32_t *end_line)
+{
+	if (!dc->hwss.get_vupdate_offset_from_vsync)
+		return;
+
+	const struct dc_crtc_timing *timing = &pipe_ctx->stream->timing;
+	int vline_pos = pipe_ctx->stream->periodic_interrupt.lines_offset;
+
+	if (pipe_ctx->stream->periodic_interrupt.ref_point == START_V_UPDATE) {
+		if (vline_pos > 0)
+			vline_pos--;
+		else if (vline_pos < 0)
+			vline_pos++;
+
+		vline_pos += dc->hwss.get_vupdate_offset_from_vsync(pipe_ctx);
+		if (vline_pos >= 0)
+			*start_line = vline_pos - ((vline_pos / timing->v_total) * timing->v_total);
+		else
+			*start_line = vline_pos + ((-vline_pos / timing->v_total) + 1) * timing->v_total - 1;
+		*end_line = (*start_line + 2) % timing->v_total;
+	} else if (pipe_ctx->stream->periodic_interrupt.ref_point == START_V_SYNC) {
+		// vsync is line 0 so start_line is just the requested line offset
+		*start_line = vline_pos;
+		*end_line = (*start_line + 2) % timing->v_total;
+	} else
+		ASSERT(0);
+}
+
 // Function to check if any update flags are set
 static bool get_pipe_update_bits_status(struct pipe_ctx *pipe, struct dc_plane_state *plane, struct dc_stream_state *stream)
 {
@@ -1173,8 +1214,16 @@ void hwss_build_fast_sequence(struct dc *dc,
 	}
 
 	if (dc->hwss.setup_periodic_interrupt && stream->update_flags.bits.periodic_interrupt) {
-		block_sequence[*num_steps].params.setup_periodic_interrupt_params.dc = dc;
-		block_sequence[*num_steps].params.setup_periodic_interrupt_params.pipe_ctx = pipe_ctx;
+		uint32_t start_line = 0;
+		uint32_t end_line = 0;
+
+		calc_vline_position(dc, pipe_ctx, &start_line, &end_line);
+		block_sequence[*num_steps].params.setup_periodic_interrupt_params.tg =
+				pipe_ctx->stream_res.tg;
+		block_sequence[*num_steps].params.setup_periodic_interrupt_params.start_line =
+				start_line;
+		block_sequence[*num_steps].params.setup_periodic_interrupt_params.end_line =
+				end_line;
 		block_sequence[*num_steps].func = HWSS_SETUP_PERIODIC_INTERRUPT;
 		(*num_steps)++;
 	}
@@ -1668,7 +1717,11 @@ void hwss_execute_sequence(struct dc *dc,
 			hwss_tg_setup_vertical_interrupt0(params);
 			break;
 		case HWSS_SETUP_PERIODIC_INTERRUPT:
-			hwss_setup_periodic_interrupt(dc, params);
+			if (dc->hwss.setup_periodic_interrupt)
+				dc->hwss.setup_periodic_interrupt(
+						params->setup_periodic_interrupt_params.tg,
+						params->setup_periodic_interrupt_params.start_line,
+						params->setup_periodic_interrupt_params.end_line);
 			break;
 		case HWSS_UPDATE_INFO_FRAME:
 			hwss_update_info_frame(dc, params);
@@ -3322,12 +3375,18 @@ void hwss_update_info_frame(struct dc *dc, union block_sequence_params *params)
 		dc->hwss.update_info_frame(pipe_ctx);
 }
 
-void hwss_setup_periodic_interrupt(struct dc *dc, union block_sequence_params *params)
+void hwss_setup_periodic_interrupt(struct dc *dc, struct pipe_ctx *pipe_ctx)
 {
-	struct pipe_ctx *pipe_ctx = params->setup_periodic_interrupt_params.pipe_ctx;
+	uint32_t start_line = 0;
+	uint32_t end_line = 0;
 
-	if (dc->hwss.setup_periodic_interrupt)
-		dc->hwss.setup_periodic_interrupt(dc, pipe_ctx);
+	if (dc->hwss.setup_periodic_interrupt) {
+		calc_vline_position(dc, pipe_ctx, &start_line, &end_line);
+		dc->hwss.setup_periodic_interrupt(
+				pipe_ctx->stream_res.tg,
+				start_line,
+				end_line);
+	}
 }
 
 void hwss_tg_setup_vertical_interrupt0(union block_sequence_params *params)
@@ -5934,9 +5993,17 @@ void hwss_add_setup_periodic_interrupt(struct block_sequence_state *seq_state,
 		struct pipe_ctx *pipe_ctx)
 {
 	if (*seq_state->num_steps < MAX_HWSS_BLOCK_SEQUENCE_SIZE) {
+		uint32_t start_line = 0;
+		uint32_t end_line = 0;
+
+		calc_vline_position(dc, pipe_ctx, &start_line, &end_line);
 		seq_state->steps[*seq_state->num_steps].func = HWSS_SETUP_PERIODIC_INTERRUPT;
-		seq_state->steps[*seq_state->num_steps].params.setup_periodic_interrupt_params.dc = dc;
-		seq_state->steps[*seq_state->num_steps].params.setup_periodic_interrupt_params.pipe_ctx = pipe_ctx;
+		seq_state->steps[*seq_state->num_steps].params.setup_periodic_interrupt_params.tg =
+				pipe_ctx->stream_res.tg;
+		seq_state->steps[*seq_state->num_steps].params.setup_periodic_interrupt_params.start_line =
+				start_line;
+		seq_state->steps[*seq_state->num_steps].params.setup_periodic_interrupt_params.end_line =
+				end_line;
 		(*seq_state->num_steps)++;
 	}
 }

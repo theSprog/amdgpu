@@ -41,9 +41,9 @@
 #include "amdgpu_dm_cursor.h"
 #include "dm_helpers.h"
 
-static int dm_check_cursor_fb(struct amdgpu_crtc *new_acrtc,
-			      struct drm_plane_state *new_plane_state,
-			      struct drm_framebuffer *fb)
+STATIC_IFN_KUNIT int dm_check_cursor_fb(struct amdgpu_crtc *new_acrtc,
+				       struct drm_plane_state *new_plane_state,
+				       struct drm_framebuffer *fb)
 {
 	struct amdgpu_device *adev = drm_to_adev(new_acrtc->base.dev);
 	struct amdgpu_framebuffer *afb = to_amdgpu_framebuffer(fb);
@@ -109,6 +109,7 @@ static int dm_check_cursor_fb(struct amdgpu_crtc *new_acrtc,
 
 	return 0;
 }
+EXPORT_IF_KUNIT(dm_check_cursor_fb);
 
 /*
  * Helper function for checking the cursor in native mode
@@ -142,6 +143,7 @@ int amdgpu_dm_check_native_cursor_state(struct drm_crtc *new_plane_crtc,
 
 	return 0;
 }
+EXPORT_IF_KUNIT(amdgpu_dm_check_native_cursor_state);
 
 bool amdgpu_dm_should_update_native_cursor(struct drm_atomic_commit *state,
 					   struct drm_crtc *old_plane_crtc,
@@ -234,9 +236,9 @@ EXPORT_IF_KUNIT(dm_get_plane_scale);
  * Return: true if the pipeline modifies pixels, false otherwise.
  */
 #ifdef HAVE_DRM_DRM_COLOROP_H
-static bool dm_plane_color_pipeline_active(struct drm_atomic_commit *state,
-					   struct drm_plane *plane,
-					   bool use_old)
+STATIC_IFN_KUNIT bool dm_plane_color_pipeline_active(struct drm_atomic_commit *state,
+						     struct drm_plane *plane,
+						     bool use_old)
 {
 	struct drm_colorop *colorop;
 	struct drm_colorop_state *old_colorop_state, *new_colorop_state;
@@ -252,6 +254,7 @@ static bool dm_plane_color_pipeline_active(struct drm_atomic_commit *state,
 	}
 	return false;
 }
+EXPORT_IF_KUNIT(dm_plane_color_pipeline_active);
 #endif
 
 /**
@@ -452,3 +455,4 @@ int amdgpu_dm_crtc_get_cursor_mode(struct amdgpu_device *adev,
 
 	return 0;
 }
+EXPORT_IF_KUNIT(amdgpu_dm_crtc_get_cursor_mode);

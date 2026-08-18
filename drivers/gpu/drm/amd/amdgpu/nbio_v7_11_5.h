@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-16 Advanced Micro Devices, Inc.
+ * Copyright 2026 Advanced Micro Devices, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -19,32 +19,14 @@
  * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  * OTHER DEALINGS IN THE SOFTWARE.
  *
- * Authors: AMD
- *
  */
 
+#ifndef __NBIO_V7_11_5_H__
+#define __NBIO_V7_11_5_H__
 
-#ifndef _DCE_CLK_MGR_H_
-#define _DCE_CLK_MGR_H_
+#include "soc15_common.h"
 
-#include "dc.h"
-#include "dcn10/dcn10_clk_mgr.h"
+extern const struct nbio_hdp_flush_reg nbio_v7_11_5_hdp_flush_reg;
+extern const struct amdgpu_nbio_funcs nbio_v7_11_5_funcs;
 
-/* functions shared by other dce clk mgrs */
-int dce_get_dp_ref_freq_khz(struct clk_mgr *clk_mgr_base);
-
-uint32_t dce_get_max_pixel_clock_for_all_paths(struct dc_state *context);
-
-
-void dce_clk_mgr_construct(
-		struct dc_context *ctx,
-		struct clk_mgr_internal *clk_mgr_dce);
-
-int dce_set_clock(
-	struct clk_mgr *clk_mgr_base,
-	int requested_clk_khz);
-
-
-void dce_clk_mgr_destroy(struct clk_mgr **clk_mgr);
-
-#endif /* _DCE_CLK_MGR_H_ */
+#endif

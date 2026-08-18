@@ -66,7 +66,7 @@ struct dcn_dsc_reg_state;
 struct dcn_optc_reg_state;
 struct dcn_dccg_reg_state;
 
-#define DC_VER "3.2.392"
+#define DC_VER "3.2.393"
 
 /**
  * MAX_SURFACES - representative of the upper bound of surfaces that can be piped to a single CRTC
@@ -1324,6 +1324,8 @@ struct dc_debug_options {
 	bool disable_dynamic_expansion_for_test_pattern;
 	uint32_t dml21_custom_derate_num_dpms;
 	uint32_t dml21_custom_derate_at_dpm[DML2_MAX_NUM_DPM_LVL];
+	bool override_utm_client_qc_profile;
+	uint8_t utm_client_qc_profiles[4];
 };
 
 
@@ -3897,5 +3899,12 @@ bool dc_get_qos_info(struct dc *dc, struct dc_qos_info *info);
 unsigned int dc_override_memory_bandwidth_request(
 		struct dc *dc,
 		unsigned int bw_mbps);
+
+/**
+ * Panel Polarity Control
+ */
+void dc_link_set_panel_polarity_enable(struct dc_link *link, bool enable);
+void dc_link_panel_polarity_reset(struct dc_link *link);
+bool dc_link_get_panel_polarity(struct dc_link *link, int32_t *polarity);
 
 #endif /* DC_INTERFACE_H_ */

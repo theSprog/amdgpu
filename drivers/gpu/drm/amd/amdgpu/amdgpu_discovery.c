@@ -44,6 +44,7 @@
 #include "nbio_v7_4.h"
 #include "nbio_v7_9.h"
 #include "nbio_v7_11.h"
+#include "nbio_v7_11_5.h"
 #include "hdp_v4_0.h"
 #include "vega10_ih.h"
 #include "vega20_ih.h"
@@ -1323,8 +1324,19 @@ static int amdgpu_discovery_sysfs_ips(struct amdgpu_device *adev,
 					ip_hw_instance->num_instance);
 			ip_hw_instance->num_base_addresses = ip->num_base_address;
 
-			for (kk = 0; kk < ip_hw_instance->num_base_addresses; kk++)
-				ip_hw_instance->base_addr[kk] = ip->base_address[kk];
+			for (kk = 0; kk < ip_hw_instance->num_base_addresses; kk++) {
+				/*
+				 * Standalone mode uses a raw copy of the discovery
+				 * binary; decode 64-bit addresses here. The shared
+				 * bin is already collapsed to 32-bit in place.
+				 */
+				if (reg_base_64 && ip_top->standalone_mode)
+					ip_hw_instance->base_addr[kk] =
+						lower_32_bits(le64_to_cpu(ip->base_address_64[kk])) & 0x3FFFFFFF;
+				else
+					ip_hw_instance->base_addr[kk] =
+						le32_to_cpu(ip->base_address[kk]);
+			}
 
 			kobject_init(&ip_hw_instance->kobj, &ip_hw_instance_ktype);
 			ip_hw_instance->kobj.kset = &ip_hw_id->hw_id_kset;
@@ -3504,9 +3516,12 @@ int amdgpu_discovery_set_ip_blocks(struct amdgpu_device *adev)
 		break;
 	case IP_VERSION(6, 3, 1):
 	case IP_VERSION(7, 11, 4):
-	case IP_VERSION(7, 11, 5):
 		adev->nbio.funcs = &nbif_v6_3_1_funcs;
 		adev->nbio.hdp_flush_reg = &nbif_v6_3_1_hdp_flush_reg;
+		break;
+	case IP_VERSION(7, 11, 5):
+		adev->nbio.funcs = &nbio_v7_11_5_funcs;
+		adev->nbio.hdp_flush_reg = &nbio_v7_11_5_hdp_flush_reg;
 		break;
 	case IP_VERSION(6, 3, 2):
 		adev->nbio.funcs = &nbio_v6_3_2_funcs;
