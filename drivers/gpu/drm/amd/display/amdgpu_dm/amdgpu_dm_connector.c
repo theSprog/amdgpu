@@ -3584,7 +3584,7 @@ static int dm_force_atomic_commit(struct drm_connector *connector)
 	/* Construct an atomic state to restore previous display setting */
 
 	/*
-	 * Attach connectors to drm_atomic_state
+	 * Attach connectors to drm_atomic_commit
 	 */
 	conn_state = drm_atomic_get_connector_state(state, connector);
 
@@ -3594,7 +3594,7 @@ static int dm_force_atomic_commit(struct drm_connector *connector)
 		goto out;
 	}
 
-	/* Attach crtc to drm_atomic_state*/
+	/* Attach crtc to drm_atomic_commit*/
 	crtc_state = drm_atomic_get_crtc_state(state, &disconnected_acrtc->base);
 
 	/* Check for error in getting crtc state */
@@ -3606,7 +3606,7 @@ static int dm_force_atomic_commit(struct drm_connector *connector)
 	/* force a restore */
 	crtc_state->mode_changed = true;
 
-	/* Attach plane to drm_atomic_state */
+	/* Attach plane to drm_atomic_commit */
 	plane_state = drm_atomic_get_plane_state(state, plane);
 
 	/* Check for error in getting plane state */

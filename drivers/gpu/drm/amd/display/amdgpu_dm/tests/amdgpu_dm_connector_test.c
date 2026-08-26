@@ -3077,14 +3077,14 @@ static void dm_test_detect_mst_start_fail(struct kunit *test)
 /* Tests for amdgpu_dm_find_first_crtc_matching_connector() */
 
 /*
- * Build a minimal drm_atomic_state holding @count connector slots. The
+ * Build a minimal drm_atomic_commit holding @count connector slots. The
  * function under test only reads num_connector, connectors[i].ptr and
  * connectors[i].new_state, so a hand-rolled state is sufficient.
  */
-static struct drm_atomic_state *
+static struct drm_atomic_commit *
 dm_test_alloc_atomic_state(struct kunit *test, int count)
 {
-	struct drm_atomic_state *state;
+	struct drm_atomic_commit *state;
 
 	state = kunit_kzalloc(test, sizeof(*state), GFP_KERNEL);
 	KUNIT_ASSERT_NOT_NULL(test, state);
@@ -3106,7 +3106,7 @@ dm_test_alloc_atomic_state(struct kunit *test, int count)
  */
 static void dm_test_find_first_crtc_match(struct kunit *test)
 {
-	struct drm_atomic_state *state = dm_test_alloc_atomic_state(test, 1);
+	struct drm_atomic_commit *state = dm_test_alloc_atomic_state(test, 1);
 	struct drm_connector *connector;
 	struct drm_connector_state *con_state;
 	struct drm_crtc *crtc;
@@ -3133,7 +3133,7 @@ static void dm_test_find_first_crtc_match(struct kunit *test)
  */
 static void dm_test_find_first_crtc_no_match(struct kunit *test)
 {
-	struct drm_atomic_state *state = dm_test_alloc_atomic_state(test, 1);
+	struct drm_atomic_commit *state = dm_test_alloc_atomic_state(test, 1);
 	struct drm_connector *connector;
 	struct drm_connector_state *con_state;
 	struct drm_crtc *crtc;
@@ -3162,7 +3162,7 @@ static void dm_test_find_first_crtc_no_match(struct kunit *test)
  */
 static void dm_test_find_first_crtc_empty_state(struct kunit *test)
 {
-	struct drm_atomic_state *state = dm_test_alloc_atomic_state(test, 0);
+	struct drm_atomic_commit *state = dm_test_alloc_atomic_state(test, 0);
 	struct drm_crtc *crtc;
 
 	crtc = kunit_kzalloc(test, sizeof(*crtc), GFP_KERNEL);
@@ -3178,7 +3178,7 @@ static void dm_test_find_first_crtc_empty_state(struct kunit *test)
  */
 static void dm_test_find_first_crtc_skips_null_ptr(struct kunit *test)
 {
-	struct drm_atomic_state *state = dm_test_alloc_atomic_state(test, 2);
+	struct drm_atomic_commit *state = dm_test_alloc_atomic_state(test, 2);
 	struct drm_connector *connector;
 	struct drm_connector_state *con_state;
 	struct drm_crtc *crtc;
@@ -3206,7 +3206,7 @@ static void dm_test_find_first_crtc_skips_null_ptr(struct kunit *test)
  */
 static void dm_test_find_first_crtc_returns_first(struct kunit *test)
 {
-	struct drm_atomic_state *state = dm_test_alloc_atomic_state(test, 2);
+	struct drm_atomic_commit *state = dm_test_alloc_atomic_state(test, 2);
 	struct drm_connector *first;
 	struct drm_connector *second;
 	struct drm_connector_state *first_state;

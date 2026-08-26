@@ -117,9 +117,9 @@ void amdgpu_dm_plane_get_min_max_dc_plane_scaling(struct drm_device *dev,
 						  int *min_downscale,
 						  int *max_upscale);
 int amdgpu_dm_plane_atomic_async_check(struct drm_plane *plane,
-				       struct drm_atomic_state *state, bool flip);
+				       struct drm_atomic_commit *state, bool flip);
 int amdgpu_dm_plane_atomic_check(struct drm_plane *plane,
-				 struct drm_atomic_state *state);
+				 struct drm_atomic_commit *state);
 void amdgpu_dm_plane_panic_flush(struct drm_plane *plane);
 void amdgpu_dm_plane_drm_plane_reset(struct drm_plane *plane);
 struct drm_plane_state *amdgpu_dm_plane_drm_plane_duplicate_state(struct drm_plane *plane);

@@ -2629,7 +2629,7 @@ static void dm_test_atomic_async_check_rejects(struct kunit *test)
  */
 static void dm_test_atomic_async_check_overlay_cursor(struct kunit *test)
 {
-	struct drm_atomic_state *state;
+	struct drm_atomic_commit *state;
 	struct __drm_planes_state *planes;
 	struct __drm_crtcs_state *crtcs;
 	struct drm_plane *plane;
@@ -2673,7 +2673,7 @@ static void dm_test_atomic_async_check_overlay_cursor(struct kunit *test)
 }
 
 static struct amdgpu_device *dm_test_init_atomic_check_state(struct kunit *test,
-							     struct drm_atomic_state **state,
+							     struct drm_atomic_commit **state,
 							     struct drm_plane **plane,
 							     struct dm_plane_state **dm_plane_state,
 							     struct drm_crtc_state **new_crtc_state,
@@ -2759,7 +2759,7 @@ static struct amdgpu_device *dm_test_init_atomic_check_state(struct kunit *test,
 static void dm_test_atomic_check_no_dc_state(struct kunit *test)
 {
 	struct amdgpu_device *adev;
-	struct drm_atomic_state *state;
+	struct drm_atomic_commit *state;
 	struct __drm_planes_state *planes;
 	struct drm_plane *plane;
 	struct dm_plane_state *dm_plane_state;
@@ -2794,7 +2794,7 @@ static void dm_test_atomic_check_no_dc_state(struct kunit *test)
 static void dm_test_atomic_check_missing_crtc_state(struct kunit *test)
 {
 	struct amdgpu_device *adev;
-	struct drm_atomic_state *state;
+	struct drm_atomic_commit *state;
 	struct __drm_planes_state *planes;
 	struct __drm_crtcs_state *crtcs;
 	struct drm_plane *plane;
@@ -2841,7 +2841,7 @@ static void dm_test_atomic_check_missing_crtc_state(struct kunit *test)
  */
 static void dm_test_atomic_check_helper_failure(struct kunit *test)
 {
-	struct drm_atomic_state *state;
+	struct drm_atomic_commit *state;
 	struct drm_plane *plane;
 	struct dm_plane_state *dm_plane_state;
 	struct drm_crtc_state *new_crtc_state;
@@ -2863,7 +2863,7 @@ static void dm_test_atomic_check_helper_failure(struct kunit *test)
  */
 static void dm_test_atomic_check_color_pipeline_conflict(struct kunit *test)
 {
-	struct drm_atomic_state *state;
+	struct drm_atomic_commit *state;
 	struct drm_plane *plane;
 	struct dm_plane_state *dm_plane_state;
 	struct drm_crtc_state *new_crtc_state;
@@ -2893,7 +2893,7 @@ static void dm_test_atomic_check_color_pipeline_conflict(struct kunit *test)
 static void dm_test_atomic_check_scaling_failure(struct kunit *test)
 {
 	struct amdgpu_device *adev;
-	struct drm_atomic_state *state;
+	struct drm_atomic_commit *state;
 	struct drm_plane *plane;
 	struct dm_plane_state *dm_plane_state;
 	struct drm_crtc_state *new_crtc_state;
