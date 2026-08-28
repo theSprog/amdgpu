@@ -148,6 +148,7 @@ enum AMDGPU_DEBUG_MASK {
 	AMDGPU_DEBUG_ENABLE_CE_CS = BIT(10),
 	AMDGPU_DEBUG_HIBERNATION_THAW_RESUME_GPU = BIT(11),
 	AMDGPU_DEBUG_DISABLE_IP_BLOCK_SOFT_RESET = BIT(12),
+	AMDGPU_DEBUG_SDMA_RB_CMD = BIT(13),
 };
 
 unsigned int amdgpu_vram_limit = UINT_MAX;
@@ -235,6 +236,7 @@ int amdgpu_reset_method = -1; /* auto */
 int amdgpu_num_kcq = -1;
 int amdgpu_smartshift_bias;
 int amdgpu_use_xgmi_p2p = 1;
+int amdgpu_ais_disabled;
 int amdgpu_vcnfw_log;
 int amdgpu_sg_display = -1; /* auto */
 int amdgpu_user_partt_mode = AMDGPU_AUTO_COMPUTE_PARTITION_MODE;
@@ -266,7 +268,7 @@ struct amdgpu_mgpu_info mgpu_info = {
 	.mutex = __MUTEX_INITIALIZER(mgpu_info.mutex),
 };
 int amdgpu_ras_enable = -1;
-uint amdgpu_ras_mask = 0xffffffff;
+u64 amdgpu_ras_mask = U64_MAX;
 int amdgpu_bad_page_threshold = -1;
 struct amdgpu_watchdog_timer amdgpu_watchdog_timer = {
 	.timeout_fatal_disable = false,
@@ -601,12 +603,12 @@ MODULE_PARM_DESC(ras_enable, "Enable RAS features on the GPU (0 = disable, 1 = e
 module_param_named(ras_enable, amdgpu_ras_enable, int, 0444);
 
 /**
- * DOC: ras_mask (uint)
- * Mask of RAS features to enable (default 0xffffffff), only valid when ras_enable == 1
+ * DOC: ras_mask (ullong)
+ * Mask of RAS features to enable (default 0xffffffffffffffff), only valid when ras_enable == 1
  * See the flags in drivers/gpu/drm/amd/amdgpu/amdgpu_ras.h
  */
-MODULE_PARM_DESC(ras_mask, "Mask of RAS features to enable (default 0xffffffff), only valid when ras_enable == 1");
-module_param_named(ras_mask, amdgpu_ras_mask, uint, 0444);
+MODULE_PARM_DESC(ras_mask, "Mask of RAS features to enable (default 0xffffffffffffffff), only valid when ras_enable == 1");
+module_param_named(ras_mask, amdgpu_ras_mask, ullong, 0444);
 
 /**
  * DOC: timeout_fatal_disable (bool)
@@ -735,6 +737,15 @@ module_param_named_unsafe(force_asic_type, amdgpu_force_asic_type, int, 0444);
 MODULE_PARM_DESC(use_xgmi_p2p,
 	"Enable XGMI P2P interface (0 = disable; 1 = enable (default))");
 module_param_named(use_xgmi_p2p, amdgpu_use_xgmi_p2p, int, 0444);
+
+/**
+ * DOC: ais_disabled (int)
+ * Disable AMD Infinity Storage (AIS) support.
+ * 0 = enable (default), 1 = disable.
+ */
+MODULE_PARM_DESC(ais_disabled,
+	"Disable AIS (AMD Infinity Storage) support (0 = enable (default), 1 = disable)");
+module_param_named(ais_disabled, amdgpu_ais_disabled, int, 0444);
 
 
 #ifdef CONFIG_HSA_AMD
@@ -2321,6 +2332,11 @@ static void amdgpu_init_debug_options(struct amdgpu_device *adev)
 	if (amdgpu_debug_mask & AMDGPU_DEBUG_DISABLE_IP_BLOCK_SOFT_RESET) {
 		pr_info("debug: IP block soft reset disabled\n");
 		adev->debug_disable_ip_block_soft_reset = true;
+	}
+
+	if (amdgpu_debug_mask & AMDGPU_DEBUG_SDMA_RB_CMD) {
+		pr_info("debug: enable SDMA RB command switch\n");
+		adev->sdma.sdma_debug = true;
 	}
 }
 

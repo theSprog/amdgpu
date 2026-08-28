@@ -147,6 +147,7 @@ static struct dm_cursor_mode_fixture dm_test_alloc_cursor_mode_fixture(struct ku
 	fixture.state->planes[1].old_state = fixture.old_primary_state;
 	fixture.state->planes[1].new_state = fixture.primary_state;
 	fixture.dm_crtc_state->base.crtc = fixture.crtc;
+	fixture.dm_crtc_state->base.enable = true;
 	fixture.dm_crtc_state->base.plane_mask = drm_plane_mask(fixture.cursor) |
 						 drm_plane_mask(fixture.primary);
 	fixture.dm_crtc_state->base.zpos_changed = true;
@@ -499,23 +500,57 @@ static void dm_test_plane_color_pipeline_ignores_other_plane(struct kunit *test)
 /* Tests for amdgpu_dm_crtc_get_cursor_mode() */
 
 /**
- * dm_test_crtc_get_cursor_mode_new_hardware - Test new hardware always uses native mode
+ * dm_test_crtc_get_cursor_mode_disabled_crtc - Test a disabled CRTC uses native cursor
+ * @test: The KUnit test context
+ *
+ * A disabled CRTC must report native mode regardless of what the planes look
+ * like, so that a commit disabling the CRTC is not rejected. The plane setup
+ * here would otherwise select overlay mode.
+ */
+static void dm_test_crtc_get_cursor_mode_disabled_crtc(struct kunit *test)
+{
+	struct dm_cursor_mode_fixture fixture = dm_test_alloc_cursor_mode_fixture(test);
+	enum amdgpu_dm_cursor_mode cursor_mode = DM_CURSOR_OVERLAY_MODE;
+
+	fixture.dm_crtc_state->base.enable = false;
+	fixture.old_primary_state->crtc_w = 1280;
+	fixture.primary_state->crtc_w = 1280;
+
+	KUNIT_EXPECT_EQ(test, dm_test_get_cursor_mode(&fixture, &cursor_mode), 0);
+	KUNIT_EXPECT_EQ(test, cursor_mode, DM_CURSOR_NATIVE_MODE);
+}
+
+/**
+ * dm_test_crtc_get_cursor_mode_new_hardware - Test dcn4x uses native cursor when the top plane fills the CRTC
  * @test: The KUnit test context
  */
 static void dm_test_crtc_get_cursor_mode_new_hardware(struct kunit *test)
 {
-	struct amdgpu_device *adev = dm_kunit_alloc_adev(test);
-	struct dm_crtc_state *dm_crtc_state;
+	struct dm_cursor_mode_fixture fixture = dm_test_alloc_cursor_mode_fixture(test);
 	enum amdgpu_dm_cursor_mode cursor_mode = DM_CURSOR_OVERLAY_MODE;
-	int ret;
 
-	dm_crtc_state = kunit_kzalloc(test, sizeof(*dm_crtc_state), GFP_KERNEL);
-	KUNIT_ASSERT_NOT_NULL(test, dm_crtc_state);
-	adev->ip_versions[DCE_HWIP][0] = IP_VERSION(4, 2, 0);
+	fixture.adev->ip_versions[DCE_HWIP][0] = IP_VERSION(4, 2, 0);
 
-	ret = amdgpu_dm_crtc_get_cursor_mode(adev, NULL, dm_crtc_state, &cursor_mode);
-	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, dm_test_get_cursor_mode(&fixture, &cursor_mode), 0);
 	KUNIT_EXPECT_EQ(test, cursor_mode, DM_CURSOR_NATIVE_MODE);
+}
+
+/**
+ * dm_test_crtc_get_cursor_mode_new_hardware_hole - Test dcn4x falls back to
+ * overlay cursor when the top plane does not fill the CRTC
+ * @test: The KUnit test context
+ */
+static void dm_test_crtc_get_cursor_mode_new_hardware_hole(struct kunit *test)
+{
+	struct dm_cursor_mode_fixture fixture = dm_test_alloc_cursor_mode_fixture(test);
+	enum amdgpu_dm_cursor_mode cursor_mode = DM_CURSOR_NATIVE_MODE;
+
+	fixture.adev->ip_versions[DCE_HWIP][0] = IP_VERSION(4, 2, 0);
+	fixture.old_primary_state->crtc_w = 1280;
+	fixture.primary_state->crtc_w = 1280;
+
+	KUNIT_EXPECT_EQ(test, dm_test_get_cursor_mode(&fixture, &cursor_mode), 0);
+	KUNIT_EXPECT_EQ(test, cursor_mode, DM_CURSOR_OVERLAY_MODE);
 }
 
 /**
@@ -535,6 +570,7 @@ static void dm_test_crtc_get_cursor_mode_no_change(struct kunit *test)
 	dm_crtc_state = kunit_kzalloc(test, sizeof(*dm_crtc_state), GFP_KERNEL);
 	KUNIT_ASSERT_NOT_NULL(test, dm_crtc_state);
 	state->dev = &adev->ddev;
+	dm_crtc_state->base.enable = true;
 	dm_crtc_state->cursor_mode = DM_CURSOR_OVERLAY_MODE;
 
 	ret = amdgpu_dm_crtc_get_cursor_mode(adev, state, dm_crtc_state, &cursor_mode);
@@ -923,7 +959,9 @@ static struct kunit_case amdgpu_dm_cursor_tests[] = {
 	KUNIT_CASE(dm_test_plane_color_pipeline_active),
 	KUNIT_CASE(dm_test_plane_color_pipeline_ignores_other_plane),
 	/* amdgpu_dm_crtc_get_cursor_mode */
+	KUNIT_CASE(dm_test_crtc_get_cursor_mode_disabled_crtc),
 	KUNIT_CASE(dm_test_crtc_get_cursor_mode_new_hardware),
+	KUNIT_CASE(dm_test_crtc_get_cursor_mode_new_hardware_hole),
 	KUNIT_CASE(dm_test_crtc_get_cursor_mode_no_change),
 	KUNIT_CASE(dm_test_crtc_get_cursor_mode_disabled_cursor),
 	KUNIT_CASE(dm_test_crtc_get_cursor_mode_yuv_plane),

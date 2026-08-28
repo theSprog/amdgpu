@@ -956,6 +956,10 @@ bool kgd2kfd_device_init(struct kfd_dev *kfd,
 		if (kfd->adev->xcp_mgr)
 			kfd_setup_interrupt_bitmap(node, i);
 
+		/* Init before kfd_init_node() enables the IH handler that walks these. */
+		INIT_LIST_HEAD(&node->dlog_streams);
+		spin_lock_init(&node->dlog_streams_lock);
+
 		/* Initialize the KFD node */
 		if (kfd_init_node(node)) {
 			dev_err(kfd_device, "Error initializing KFD node\n");
@@ -969,7 +973,8 @@ bool kgd2kfd_device_init(struct kfd_dev *kfd,
 
 	svm_range_set_max_pages(kfd->adev);
 
-	kfd_ais_init(kfd->adev);
+	if (!amdgpu_ais_disabled)
+		kfd_ais_init(kfd->adev);
 
 	kfd->init_complete = true;
 	dev_info(kfd_device, "added device %x:%x\n", kfd->adev->pdev->vendor,
@@ -1033,8 +1038,11 @@ int kgd2kfd_pre_reset(struct kfd_dev *kfd,
 
 	kgd2kfd_suspend(kfd, true, true);
 
-	for (i = 0; i < kfd->num_nodes; i++)
+	for (i = 0; i < kfd->num_nodes; i++) {
 		kfd_signal_reset_event(kfd->nodes[i]);
+		/* Suspended above, so no more records: fail blocked pollers. */
+		kfd_dlog_stream_notify_node_reset(kfd->nodes[i]);
+	}
 
 	return 0;
 }
@@ -1533,8 +1541,11 @@ void kgd2kfd_smi_event_throttle(struct kfd_dev *kfd, uint64_t throttle_bitmask)
  */
 unsigned int kfd_get_num_sdma_engines(struct kfd_node *node)
 {
-	/* If XGMI is not supported, all SDMA engines are PCIe */
-	if (!node->adev->gmc.xgmi.supported)
+	/* If XGMI is not supported, all SDMA engines are PCIe.
+	 * Also, on GC 12.1, all SDMA engines are the same.
+	 */
+	if (!node->adev->gmc.xgmi.supported ||
+	    KFD_GC_VERSION(node->kfd) == IP_VERSION(12, 1, 0))
 		return node->adev->sdma.num_instances/(int)node->kfd->num_nodes;
 
 	return min(node->adev->sdma.num_instances/(int)node->kfd->num_nodes, 2);

@@ -1610,6 +1610,8 @@ enum dc_edid_status dm_helpers_read_local_edid(
 
 	return edid_status;
 }
+EXPORT_IF_KUNIT(dm_helpers_read_local_edid);
+
 int dm_helper_dmub_aux_transfer_sync(
 		struct dc_context *ctx,
 		const struct dc_link *link,
@@ -1634,6 +1636,7 @@ int dm_helpers_dmub_set_config_sync(struct dc_context *ctx,
 	return amdgpu_dm_process_dmub_set_config_sync(ctx, link->link_index, payload,
 			operation_result);
 }
+EXPORT_IF_KUNIT(dm_helpers_dmub_set_config_sync);
 
 void dm_set_dcn_clocks(struct dc_context *ctx, struct dc_clocks *clks)
 {
@@ -1702,6 +1705,7 @@ void *dm_helpers_allocate_gpu_mem(
 
 	return dm_allocate_gpu_mem(adev, type, size, addr);
 }
+EXPORT_IF_KUNIT(dm_helpers_allocate_gpu_mem);
 
 void dm_helpers_free_gpu_mem(
 		struct dc_context *ctx,
@@ -1712,6 +1716,7 @@ void dm_helpers_free_gpu_mem(
 
 	dm_free_gpu_mem(adev, type, pvMem);
 }
+EXPORT_IF_KUNIT(dm_helpers_free_gpu_mem);
 
 bool dm_helpers_dmub_outbox_interrupt_control(struct dc_context *ctx, bool enable)
 {
@@ -2187,3 +2192,4 @@ bool dm_helpers_submit_i2c_over_aux(struct ddc_service *ddc, uint32_t address, u
 	//TODO: Implement this
 	return false;
 }
+EXPORT_IF_KUNIT(dm_helpers_submit_i2c_over_aux);

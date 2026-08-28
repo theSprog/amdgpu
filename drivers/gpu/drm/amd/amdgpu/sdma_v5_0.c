@@ -1373,7 +1373,6 @@ static int sdma_v5_0_early_init(struct amdgpu_ip_block *ip_block)
 		return r;
 
 	sdma_v5_0_set_ring_funcs(adev);
-	sdma_v5_0_set_buffer_funcs(adev);
 	amdgpu_sdma_set_vm_pte_scheds(adev, &sdma_v5_0_vm_pte_funcs);
 	sdma_v5_0_set_irq_funcs(adev);
 	sdma_v5_0_set_mqd_funcs(adev);
@@ -1472,8 +1471,11 @@ static int sdma_v5_0_hw_init(struct amdgpu_ip_block *ip_block)
 	sdma_v5_0_init_golden_registers(adev);
 
 	r = sdma_v5_0_start(adev);
+	if (r)
+		return r;
+	sdma_v5_0_set_buffer_funcs(adev);
 
-	return r;
+	return 0;
 }
 
 static int sdma_v5_0_hw_fini(struct amdgpu_ip_block *ip_block)
@@ -1497,21 +1499,6 @@ static int sdma_v5_0_suspend(struct amdgpu_ip_block *ip_block)
 static int sdma_v5_0_resume(struct amdgpu_ip_block *ip_block)
 {
 	return sdma_v5_0_hw_init(ip_block);
-}
-
-static bool sdma_v5_0_is_idle(struct amdgpu_ip_block *ip_block)
-{
-	struct amdgpu_device *adev = ip_block->adev;
-	u32 i;
-
-	for (i = 0; i < adev->sdma.num_instances; i++) {
-		u32 tmp = RREG32(sdma_v5_0_get_reg_offset(adev, i, mmSDMA0_STATUS_REG));
-
-		if (!(tmp & SDMA0_STATUS_REG__IDLE_MASK))
-			return false;
-	}
-
-	return true;
 }
 
 static int sdma_v5_0_wait_for_idle(struct amdgpu_ip_block *ip_block)
@@ -1914,7 +1901,6 @@ static const struct amd_ip_funcs sdma_v5_0_ip_funcs = {
 	.hw_fini = sdma_v5_0_hw_fini,
 	.suspend = sdma_v5_0_suspend,
 	.resume = sdma_v5_0_resume,
-	.is_idle = sdma_v5_0_is_idle,
 	.wait_for_idle = sdma_v5_0_wait_for_idle,
 	.soft_reset = sdma_v5_0_soft_reset,
 	.set_clockgating_state = sdma_v5_0_set_clockgating_state,
@@ -2052,10 +2038,7 @@ static const struct amdgpu_buffer_funcs sdma_v5_0_buffer_funcs = {
 
 static void sdma_v5_0_set_buffer_funcs(struct amdgpu_device *adev)
 {
-	if (adev->mman.buffer_funcs == NULL) {
-		adev->mman.buffer_funcs = &sdma_v5_0_buffer_funcs;
-		adev->mman.buffer_funcs_ring = &adev->sdma.instance[0].ring;
-	}
+	amdgpu_sdma_set_buffer_funcs_scheds(adev, &sdma_v5_0_buffer_funcs);
 }
 
 const struct amdgpu_ip_block_version sdma_v5_0_ip_block = {

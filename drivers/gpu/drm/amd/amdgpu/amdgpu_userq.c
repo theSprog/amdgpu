@@ -418,19 +418,12 @@ static void amdgpu_userq_wait_for_last_fence(struct amdgpu_usermode_queue *queue
 	dma_fence_wait(f, false);
 }
 
-static void amdgpu_userq_cleanup(struct amdgpu_usermode_queue *queue)
+static void amdgpu_userq_detach_doorbell(struct amdgpu_usermode_queue *queue)
 {
-	struct amdgpu_userq_mgr *uq_mgr = queue->userq_mgr;
-	struct amdgpu_device *adev = uq_mgr->adev;
+	struct amdgpu_device *adev = queue->userq_mgr->adev;
 
-	/* Wait for mode-1 reset to complete */
 	down_read(&adev->reset_domain->sem);
-
-	/* Use interrupt-safe locking since IRQ handlers may access these XArrays */
 	xa_erase_irq(&adev->userq_doorbell_xa, queue->doorbell_index);
-	amdgpu_userq_fence_driver_free(queue);
-	queue->fence_drv = NULL;
-
 	up_read(&adev->reset_domain->sem);
 }
 
@@ -551,18 +544,19 @@ amdgpu_userq_destroy(struct amdgpu_userq_mgr *uq_mgr, struct amdgpu_usermode_que
 
 	cancel_delayed_work_sync(&uq_mgr->resume_work);
 
-	/* Cancel any pending hang detection work and cleanup */
-	cancel_delayed_work_sync(&queue->hang_detect_work);
-
 	mutex_lock(&uq_mgr->userq_mutex);
 	amdgpu_userq_wait_for_last_fence(queue);
+
+	amdgpu_userq_detach_doorbell(queue);
+	cancel_delayed_work_sync(&queue->hang_detect_work);
 
 #if defined(CONFIG_DEBUG_FS)
 	debugfs_remove_recursive(queue->debugfs_queue);
 #endif
 	r = amdgpu_userq_unmap_helper(queue);
 	atomic_dec(&uq_mgr->userq_count[queue->queue_type]);
-	amdgpu_userq_cleanup(queue);
+	amdgpu_userq_fence_driver_free(queue);
+	queue->fence_drv = NULL;
 	mutex_unlock(&uq_mgr->userq_mutex);
 
 	/*
@@ -574,7 +568,6 @@ amdgpu_userq_destroy(struct amdgpu_userq_mgr *uq_mgr, struct amdgpu_usermode_que
 	if (r)
 		queue_work(adev->reset_domain->wq, &uq_mgr->reset_work);
 
-	cancel_delayed_work_sync(&queue->hang_detect_work);
 	uq_funcs->mqd_destroy(queue);
 	queue->userq_mgr = NULL;
 
@@ -702,10 +695,10 @@ amdgpu_userq_create(struct drm_file *filp, union drm_amdgpu_userq *args)
 					   args->in.queue_size,
 					   &queue->userq_vas.va.queue_rb) ||
 	    amdgpu_userq_input_va_validate(adev, queue, args->in.rptr_va,
-					   AMDGPU_GPU_PAGE_SIZE,
+					   sizeof(u64),
 					   &queue->userq_vas.va.rptr) ||
 	    amdgpu_userq_input_va_validate(adev, queue, args->in.wptr_va,
-					   AMDGPU_GPU_PAGE_SIZE,
+					   sizeof(u64),
 					   &queue->userq_vas.va.wptr)) {
 		r = -EINVAL;
 		amdgpu_bo_unreserve(fpriv->vm.root.bo);
@@ -748,7 +741,7 @@ amdgpu_userq_create(struct drm_file *filp, union drm_amdgpu_userq *args)
 	    ((queue->queue_type != AMDGPU_HW_IP_GFX) &&
 	     (queue->queue_type != AMDGPU_HW_IP_COMPUTE))) {
 		/* Serialize the map against an in-progress GPU reset (MES is
-		 * unresponsive during recovery), matching amdgpu_userq_cleanup().
+		 * unresponsive during recovery), matching amdgpu_userq_detach_doorbell().
 		 */
 		down_read(&adev->reset_domain->sem);
 		r = amdgpu_userq_map_helper(queue);
@@ -848,6 +841,12 @@ static int amdgpu_userq_input_args_validate(struct drm_device *dev,
 
 		if (!args->in.wptr_va || !args->in.rptr_va) {
 			drm_file_err(filp, "invalidate userq queue rptr or wptr\n");
+			return -EINVAL;
+		}
+
+		if (!IS_ALIGNED(args->in.wptr_va, sizeof(u64)) ||
+		    !IS_ALIGNED(args->in.rptr_va, sizeof(u64))) {
+			drm_file_err(filp, "user queue rptr or wptr is not 8-byte aligned\n");
 			return -EINVAL;
 		}
 		break;
@@ -1055,6 +1054,30 @@ retry_lock:
 		drm_exec_retry_on_contention(&exec);
 		if (unlikely(ret))
 			goto unlock_all;
+
+		/*
+		 * WPTR BOs are VM-mapped, but each BO has its own reservation
+		 * object. Lock them into this drm_exec ww context so the later
+		 * amdgpu_bo_gpu_offset() reads are done with the BO resv locked.
+		 */
+		xa_for_each(&uq_mgr->userq_xa, tmp_key, queue) {
+			struct ttm_operation_ctx wptr_ctx = { false, false };
+
+			bo = queue->wptr_obj.obj;
+			if (!bo)
+				continue;
+
+			ret = drm_exec_prepare_obj(&exec, &bo->tbo.base,
+						   TTM_NUM_MOVE_FENCES + 1);
+			drm_exec_retry_on_contention(&exec);
+			if (unlikely(ret))
+				goto unlock_all;
+
+			amdgpu_bo_placement_from_domain(bo, bo->allowed_domains);
+			ret = ttm_bo_validate(&bo->tbo, &bo->placement, &wptr_ctx);
+			if (unlikely(ret))
+				goto unlock_all;
+		}
 	}
 
 #ifdef HAVE_AMDKCL_HMM_MIRROR_ENABLED

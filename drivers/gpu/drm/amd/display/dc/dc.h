@@ -66,7 +66,7 @@ struct dcn_dsc_reg_state;
 struct dcn_optc_reg_state;
 struct dcn_dccg_reg_state;
 
-#define DC_VER "3.2.393"
+#define DC_VER "3.2.395"
 
 /**
  * MAX_SURFACES - representative of the upper bound of surfaces that can be piped to a single CRTC
@@ -432,6 +432,7 @@ struct dc_caps {
 	uint8_t num_of_dpias_per_host_router;
 	/* limit of the ODM only, could be limited by other factors (like pipe count)*/
 	uint8_t max_odm_combine_factor;
+	bool utm_support;
 };
 
 struct dc_bug_wa {
@@ -652,6 +653,7 @@ enum visual_confirm {
 	VISUAL_CONFIRM_VABC = 21,
 	VISUAL_CONFIRM_DCC = 22,
 	VISUAL_CONFIRM_BOOSTED_REFRESH_RATE = 23,
+	VISUAL_CONFIRM_DM_PASSTHROUGH = 26,
 	VISUAL_CONFIRM_EXPLICIT = 0x80000000,
 };
 

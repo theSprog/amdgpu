@@ -857,7 +857,6 @@ static const struct amd_ip_funcs vce_v3_0_ip_funcs = {
 	.hw_fini = vce_v3_0_hw_fini,
 	.suspend = vce_v3_0_suspend,
 	.resume = vce_v3_0_resume,
-	.is_idle = vce_v3_0_is_idle,
 	.wait_for_idle = vce_v3_0_wait_for_idle,
 	.soft_reset = vce_v3_0_soft_reset,
 	.set_clockgating_state = vce_v3_0_set_clockgating_state,
@@ -891,7 +890,7 @@ static const struct amdgpu_ring_funcs vce_v3_0_ring_phys_funcs = {
 
 static const struct amdgpu_ring_funcs vce_v3_0_ring_vm_funcs = {
 	.type = AMDGPU_RING_TYPE_VCE,
-	.align_mask = 0xf,
+	.align_mask = 0x1f,
 	.nop = VCE_CMD_NO_OP,
 	.support_64bit_ptrs = false,
 	.no_user_fence = true,

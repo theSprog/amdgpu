@@ -57,10 +57,7 @@ void dcn10_wait_for_pipe_update_if_needed(
 void dcn10_set_wait_for_update_needed_for_pipe(
 	struct dc *dc,
 	struct pipe_ctx *pipe_ctx);
-void dcn10_pipe_control_lock(
-	struct dc *dc,
-	struct pipe_ctx *pipe,
-	bool lock);
+void dcn10_tg_lock(struct tg_lock_params *params);
 void dcn10_cursor_lock(struct dc *dc, struct pipe_ctx *pipe, bool lock);
 void dcn10_blank_pixel_data(
 		struct dc *dc,
@@ -74,8 +71,7 @@ void dcn10_program_output_csc(struct dc *dc,
 		uint16_t *matrix,
 		int opp_id);
 bool dcn10_set_output_transfer_func(struct set_output_transfer_func_params *params);
-bool dcn10_set_input_transfer_func(struct dc *dc, struct pipe_ctx *pipe_ctx,
-			const struct dc_plane_state *plane_state);
+bool dcn10_set_input_transfer_func(struct set_input_transfer_func_params *params);
 void dcn10_update_plane_addr(const struct dc *dc, struct pipe_ctx *pipe_ctx);
 void dcn10_update_mpcc(struct dc *dc, struct pipe_ctx *pipe_ctx);
 void dcn10_reset_hw_ctx_wrap(

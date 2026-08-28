@@ -247,6 +247,7 @@ enum cache_policy {
 	 (KFD_GC_VERSION(dev) == IP_VERSION(9, 5, 0)))
 
 struct kfd_node;
+struct file;
 
 struct kfd_event_interrupt_class {
 	bool (*interrupt_isr)(struct kfd_node *dev,
@@ -376,6 +377,13 @@ struct kfd_node {
 	spinlock_t watch_points_lock;
 
 	struct kfd_dev_pc_sampling pcs_data;
+
+	/*
+	 * Active dispatch-log streams keyed by target PASID, walked from the IRQ
+	 * top half; the IRQ-safe lock guards list membership and the wake only.
+	 */
+	struct list_head	dlog_streams;
+	spinlock_t		dlog_streams_lock;
 };
 
 struct kfd_dev {
@@ -624,6 +632,16 @@ struct queue_properties {
 	struct amdgpu_bo *wptr_bo;
 	struct amdgpu_bo *rptr_bo;
 	struct amdgpu_bo *ring_bo;
+	/*
+	 * Dispatch-log MQD fields for the KFD-owned VMID0 stream (gfx950/gfx12);
+	 * see the MQD offset static_asserts in kfd_mqd_manager_v9/v12.c.
+	 */
+	uint64_t dispatch_record_buffer_addr;
+	uint32_t dispatch_record_buffer_size;
+	/* Per-region wptr array VA the firmware advances; 0 == not registered. */
+	uint64_t dispatch_record_wptr_addr;
+	/* Notify interval, nonzero while armed to an active stream; 0 when unbound. */
+	uint32_t dispatch_record_notify_interval;
 	struct amdgpu_bo *eop_buf_bo;
 	struct amdgpu_bo *cwsr_bo;
 };
@@ -873,6 +891,8 @@ struct ais_counter_entry {
 	uint64_t bytes_written;
 };
 
+struct kfd_dlog_stream;
+
 /* Data that is per-process-per device. */
 struct kfd_process_device {
 	/* The device that owns this data. */
@@ -1003,6 +1023,12 @@ struct kfd_process_device {
 	u32 pasid;
 	/* Indicates this process has requested PTL stay disabled */
 	bool ptl_disable_req;
+
+	/*
+	 * Dispatch-log per-device session (guarded by kfd_process.mutex); at most
+	 * one live, holding a stream ref while any MQD may reference the BO.
+	 */
+	struct kfd_dlog_session *dlog_session;
 };
 
 #define qpd_to_pdd(x) container_of(x, struct kfd_process_device, qpd)
@@ -1028,6 +1054,37 @@ struct svm_range_list {
 	 * recoverable page faults
 	 */
 	uint8_t default_granularity;
+};
+
+/* Cap on the requested records-region size (bounds an unprivileged GTT pin). */
+#define KFD_DISPATCH_LOG_MAX_BUFFER_SIZE	(16U << 20)
+
+/* MQD notify interval: firmware raises a notify ~every N records; 0 disables. */
+#define KFD_DISPATCH_LOG_NOTIFY_INTERVAL	50u
+
+/*
+ * Firmware tags the notify EOP with context_id0 == (CTX_TAG | pipe_id). The tag
+ * shares bit 24 with AMDGPU_FENCE_MES_QUEUE_FLAG, so decode it before that filter.
+ */
+#define KFD_DISPATCH_LOG_NOTIFY_CTX_TAG		0xd10c0000u
+#define KFD_DISPATCH_LOG_NOTIFY_CTX_MASK	0xffff0000u
+#define KFD_DISPATCH_LOG_NOTIFY_PIPE_MASK	0x000000ffu
+
+/* VMID0/GART addresses + geometry the stream hands to PQM to arm queues. */
+struct kfd_dlog_bind_info {
+	struct kfd_node		*dev;
+	u64			base_va;
+	u64			wptr_va;
+	u32			buffer_size;
+};
+
+/*
+ * Per-(process, device) dispatch-log binding, holding one stream reference while
+ * any MQD may contain @info's VMID0 addresses. Guarded by the target's mutex.
+ */
+struct kfd_dlog_session {
+	struct kfd_dlog_stream	*stream;	/* holds one stream reference */
+	struct kfd_dlog_bind_info info;
 };
 
 /* Process data */
@@ -1192,6 +1249,12 @@ struct kfd_process {
 
 	/* Indicates process' PC Sampling ref cnt*/
 	uint32_t pc_sampling_ref;
+
+	/*
+	 * Set under @mutex before dispatch-log teardown (pqm_uninit) so a racing
+	 * profiler OPEN_STREAM cannot install a session on a torn-down target.
+	 */
+	bool dlog_teardown;
 };
 
 #define KFD_PROCESS_TABLE_SIZE 8 /* bits: 256 entries */
@@ -1580,6 +1643,48 @@ int pqm_create_queue(struct process_queue_manager *pqm,
 int pqm_destroy_queue(struct process_queue_manager *pqm, unsigned int qid);
 int pqm_update_queue_properties(struct process_queue_manager *pqm, unsigned int qid,
 			struct queue_properties *p);
+/* Per-ASIC region count (== firmware GC__NUM_ME_PIPES_PER_ME1), 0 if unsupported. */
+u32 kfd_dispatch_log_node_num_regions(struct kfd_node *dev);
+/* Arm @target's queues on @gpu_id with @bind and publish a session. */
+int pqm_enable_dispatch_log_stream(struct kfd_process *target, u32 gpu_id,
+			struct kfd_dlog_stream *stream,
+			const struct kfd_dlog_bind_info *bind);
+/*
+ * Unbind the (process, device) session and drop its stream ref, but only if the
+ * live session is @stream's (a newer stream's session is left untouched).
+ */
+int pqm_disable_dispatch_log_stream(struct kfd_process *target, u32 gpu_id,
+			struct kfd_dlog_stream *stream);
+void kfd_dispatch_log_release_process(struct kfd_process *target);
+/* Fail-closed cross-process auth, enforced before pinning; 0 if allowed. */
+int kfd_dispatch_log_target_check_auth(struct kfd_process *target, u32 gpu_id,
+				       struct kfd_node *node);
+
+/* Stream refcount, held by PQM sessions and mmap VMAs. */
+void kfd_dlog_stream_get(struct kfd_dlog_stream *st);
+void kfd_dlog_stream_put(struct kfd_dlog_stream *st);
+bool kfd_dlog_stream_is_terminal(struct kfd_dlog_stream *st);
+/*
+ * Re-key the stream's IH wake-routing PASID to the live pdd->pasid at arm time
+ * (corrects early-attach pasid 0). @node == pdd->dev; caller holds target->mutex.
+ */
+void kfd_dlog_stream_set_pasid(struct kfd_dlog_stream *st,
+			       struct kfd_node *node, u32 pasid);
+
+int kfd_dlog_stream_create_file(struct kfd_ioctl_dlog_args *args,
+				       struct file **filep);
+/*
+ * Decode+route a dispatch-log notify tag; true == consumed. IRQ-safe; must run
+ * before the gfx12 MES-fence filter and kfd_signal_event_interrupt().
+ */
+bool kfd_dlog_ih_route_notify(struct kfd_node *node,
+			      const uint32_t *ih_ring_entry);
+/* @target's queues have stopped: terminal-wake (EPOLLHUP) its streams. */
+void kfd_dlog_stream_notify_target_release(struct kfd_process *target);
+/* Non-terminal wake after a queue on (node, pasid) is destroyed. */
+void kfd_dlog_stream_notify_queue_destroyed(struct kfd_node *node, u32 pasid);
+/* GPU reset: the node survives, so streams are only failed (EPOLLERR). */
+void kfd_dlog_stream_notify_node_reset(struct kfd_node *node);
 int pqm_update_mqd(struct process_queue_manager *pqm, unsigned int qid,
 			struct mqd_update_info *minfo);
 int pqm_set_gws(struct process_queue_manager *pqm, unsigned int qid,
