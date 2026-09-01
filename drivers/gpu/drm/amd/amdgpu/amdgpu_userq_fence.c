@@ -148,13 +148,13 @@ amdgpu_userq_fence_driver_process(struct amdgpu_userq_fence_driver *fence_drv)
 	LIST_HEAD(to_be_signaled);
 	struct dma_fence *fence;
 	unsigned long flags;
-	u64 rptr;
+	u64 fence_val;
 
 	spin_lock_irqsave(&fence_drv->fence_list_lock, flags);
-	rptr = amdgpu_userq_fence_read(fence_drv);
+	fence_val = amdgpu_userq_fence_read(fence_drv);
 
 	list_for_each_entry(userq_fence, &fence_drv->fences, link) {
-		if (rptr < userq_fence->base.seqno)
+		if (fence_val < userq_fence->base.seqno)
 			break;
 	}
 
@@ -316,12 +316,12 @@ static bool amdgpu_userq_fence_signaled(struct dma_fence *f)
 {
 	struct amdgpu_userq_fence *fence = to_amdgpu_userq_fence(f);
 	struct amdgpu_userq_fence_driver *fence_drv = fence->fence_drv;
-	u64 rptr, wptr;
+	u64 fence_val, wptr;
 
-	rptr = amdgpu_userq_fence_read(fence_drv);
+	fence_val = amdgpu_userq_fence_read(fence_drv);
 	wptr = fence->base.seqno;
 
-	if (rptr >= wptr)
+	if (fence_val >= wptr)
 		return true;
 
 	return false;
@@ -361,7 +361,7 @@ static const struct dma_fence_ops amdgpu_userq_fence_ops = {
  *
  * Read the wptr value from userq's MQD. The userq signal IOCTL
  * creates a dma_fence for the shared buffers that expects the
- * RPTR value written to seq64 memory >= WPTR.
+ * fence_val written to seq64 fence address >= WPTR.
  *
  * Returns wptr value on success, error on failure.
  */
@@ -385,7 +385,7 @@ static int amdgpu_userq_fence_read_wptr(struct amdgpu_device *adev,
 		if (unlikely(ret))
 			goto lock_error;
 
-		mapping = amdgpu_vm_bo_lookup_mapping(queue->vm, addr >> PAGE_SHIFT);
+		mapping = amdgpu_vm_bo_lookup_mapping(queue->vm, addr);
 		if (!mapping) {
 			ret = -EINVAL;
 			goto lock_error;
