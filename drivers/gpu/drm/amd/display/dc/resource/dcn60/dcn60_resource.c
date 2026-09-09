@@ -3,6 +3,7 @@
 // Copyright 2024 Advanced Micro Devices, Inc.
 
 #include "dm_services.h"
+#include "dm_helpers.h"
 #include "dc.h"
 
 #include "dcn32/dcn32_init.h"
@@ -81,8 +82,10 @@
 
 #include "dc_state_priv.h"
 
-#include "dml2_0/dml2_wrapper.h"
-#include "dml2_0/dml21/dml21_wrapper.h"
+#include "dml2_wrapper/dml2_wrapper.h"
+#include "dml2_wrapper/dml21_wrapper/dml21_wrapper.h"
+
+#define LSDMA_CONTENTION_BUFFER_SIZE (64 * 1024 * 1024)
 
 #define DC_LOGGER_INIT(logger)
 
@@ -286,7 +289,7 @@ static const struct dcn31_vpg_mask vpg_mask = {
 #define apg_regs_init(id)\
 	APG_DCN31_REG_LIST_RI(id)
 
-static struct dcn31_apg_registers apg_regs[4];
+static struct dcn31_apg_registers apg_regs[5];
 
 static const struct dcn31_apg_shift apg_shift = {
 	DCN31_APG_MASK_SH_LIST(__SHIFT)
@@ -1390,7 +1393,8 @@ static struct apg *dcn60_apg_create(
 	apg_regs_init(0),
 	apg_regs_init(1),
 	apg_regs_init(2),
-	apg_regs_init(3);
+	apg_regs_init(3),
+	apg_regs_init(4);
 
 	apg31_construct(apg60, ctx, inst,
 			&apg_regs[inst],
@@ -1625,6 +1629,12 @@ static void dcn60_dsc_destroy(struct display_stream_compressor **dsc)
 static void dcn60_resource_destruct(struct dcn60_resource_pool *pool)
 {
 	unsigned int i;
+
+	if (pool->base.lsdma_scratch.buffer) {
+		dm_helpers_free_gpu_mem(pool->base.ctx,
+				DC_MEM_ALLOC_TYPE_GART, pool->base.lsdma_scratch.buffer);
+		pool->base.lsdma_scratch.buffer = NULL;
+	}
 
 	for (i = 0; i < pool->base.stream_enc_count; i++) {
 		if (pool->base.stream_enc[i] != NULL) {
@@ -2042,6 +2052,16 @@ static bool dcn60_resource_construct(
 	dc->caps.utm_support = true;
 	dc->caps.max_v_total = (1 << 15) - 1;
 
+	pool->base.ctx = ctx;
+
+	if (dc->config.lsdma_peak_bw_contention_support) {
+		pool->base.lsdma_scratch.buffer = dm_helpers_allocate_gpu_mem(ctx,
+				DC_MEM_ALLOC_TYPE_GART, LSDMA_CONTENTION_BUFFER_SIZE,
+				&pool->base.lsdma_scratch.pa);
+		if (pool->base.lsdma_scratch.buffer)
+			pool->base.lsdma_scratch.size = LSDMA_CONTENTION_BUFFER_SIZE;
+	}
+
 	if (ASICREV_IS_GC_12_0_1_A0(dc->ctx->asic_id.hw_internal_rev))
 		dc->caps.dcc_plane_width_limit = 7680;
 
@@ -2110,6 +2130,7 @@ static bool dcn60_resource_construct(
 	dc->config.enable_windowed_mpo_odm = true;
 	dc->config.set_pipe_unlock_order = true; /* Need to ensure DET gets freed before allocating */
 	dc->config.dp_connector_no_native_i2c = true;
+	dc->caps.fused_io_supported = true;
 	/* read VBIOS LTTPR caps */
 	{
 		if (ctx->dc_bios->funcs->get_lttpr_caps) {

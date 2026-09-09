@@ -102,7 +102,7 @@
 #define DC_LOGGER_INIT(logger)
 #include "link/hwss/link_hwss_hpo_frl.h"
 #include "dml/dml1_frl_cap_chk.h"
-#include "dml2_0/dml2_wrapper.h"
+#include "dml2_wrapper/dml2_wrapper.h"
 
 #define UNABLE_TO_SPLIT -1
 
@@ -1801,7 +1801,11 @@ bool resource_can_pipe_disable_cursor(struct pipe_ctx *pipe_ctx)
 		 * pipe-split, merge together per same height.
 		 */
 		for (split_pipe = pipe_ctx->top_pipe; split_pipe;
-		     split_pipe = split_pipe->top_pipe)
+		     split_pipe = split_pipe->top_pipe) {
+
+			if (split_pipe == test_pipe)
+				continue;
+
 			if (split_pipe->plane_state->layer_index == test_pipe->plane_state->layer_index) {
 				struct rect r2_half;
 
@@ -1813,6 +1817,7 @@ bool resource_can_pipe_disable_cursor(struct pipe_ctx *pipe_ctx)
 				r2_bottom = min(r2_bottom, r2_half.y + r2_half.height);
 				break;
 			}
+		}
 
 		if (r1.x >= r2.x && r1.y >= r2.y && r1_right <= r2_right && r1_bottom <= r2_bottom)
 			return true;
@@ -4470,6 +4475,10 @@ enum dc_status resource_validate_probe_set(struct dc *dc,
 
 		if (probes[i].scope.type != DC_PROBE_SCOPE_GLOBAL)
 			return DC_NOT_SUPPORTED;
+
+		if (probes[i].type == DC_PROBE_PEAK_MEM_BW_STRESSED &&
+				!dc->res_pool->lsdma_scratch.buffer)
+			return DC_NO_DRAM_BUFFER_RESOURCE;
 	}
 
 	return DC_OK;

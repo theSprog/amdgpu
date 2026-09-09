@@ -13,6 +13,7 @@
 #include "soc_and_ip_translator.h"
 #include "bounding_boxes/utm_qos_model_types.h"
 #include "bounding_boxes/utm_qos_model_dchub_v3.h"
+#include "bounding_boxes/dcn6_soc_bb.h"
 #include "reg_helper.h"
 #include "core_types.h"
 #include "dm_helpers.h"
@@ -478,6 +479,39 @@ static int dcn60_get_dtb_ref_freq_khz(struct clk_mgr *clk_mgr_base)
 	return dtb_ref_clk_khz;
 }
 
+/**
+ * dcn60_override_dc_mode_limit - Override DC mode limits from the clock table.
+ * @dc_limit: output DC mode limit to populate
+ * @clk_table: clock table already populated (and possibly overridden)
+ *
+ * Sets the DC mode max frequency for each clock to the highest populated DPM
+ * level in the clock table. Deriving the limit from the clock table (rather
+ * than the raw DAL init table) ensures any overrides applied to the clock
+ * levels are respected.
+ */
+static void dcn60_override_dc_mode_limit(
+		struct clk_limit_table_entry *dc_limit,
+		const struct clk_limit_table *clk_table)
+{
+	const struct clk_limit_table_entry *entries = clk_table->entries;
+	const struct clk_limit_num_entries *num_entries = &clk_table->num_entries_per_clk;
+
+	dc_limit->dcfclk_mhz  = num_entries->num_dcfclk_levels ?
+			entries[num_entries->num_dcfclk_levels - 1].dcfclk_mhz : 0;
+	dc_limit->socclk_mhz  = num_entries->num_socclk_levels ?
+			entries[num_entries->num_socclk_levels - 1].socclk_mhz : 0;
+	dc_limit->dtbclk_mhz  = num_entries->num_dtbclk_levels ?
+			entries[num_entries->num_dtbclk_levels - 1].dtbclk_mhz : 0;
+	dc_limit->dispclk_mhz = num_entries->num_dispclk_levels ?
+			entries[num_entries->num_dispclk_levels - 1].dispclk_mhz : 0;
+	dc_limit->dppclk_mhz  = num_entries->num_dppclk_levels ?
+			entries[num_entries->num_dppclk_levels - 1].dppclk_mhz : 0;
+	dc_limit->memclk_mhz  = num_entries->num_memclk_levels ?
+			entries[num_entries->num_memclk_levels - 1].memclk_mhz : 0;
+	dc_limit->fclk_mhz    = num_entries->num_fclk_levels ?
+			entries[num_entries->num_fclk_levels - 1].fclk_mhz : 0;
+}
+
 static unsigned int dcn60_get_dc_mode_limit_mhz(const DpmClock_t *dpm_clk)
 {
 	if (dpm_clk->NumClocks
@@ -494,8 +528,10 @@ static unsigned int dcn60_get_dc_mode_limit_mhz(const DpmClock_t *dpm_clk)
  *
  * Sets the DC mode max frequency for each clock. If DcMaxClock equals the
  * highest DPM level, the limit is set to 0 (no DC-specific cap).
+ *
+ * Temporarily unused.
  */
-static void dcn60_populate_dc_mode_limit(
+static void __maybe_unused dcn60_populate_dc_mode_limit(
 		struct clk_limit_table_entry *dc_limit,
 		const DalInitTable_t *init_table)
 {
@@ -577,6 +613,20 @@ static void dcn60_populate_clk_table(struct clk_mgr_internal *clk_mgr,
 		clk_table->num_entries = 1;
 }
 
+/**
+ * dcn60_override_clk_table - Override the clock table with hardcoded values.
+ * @clk_table: clock table to override
+ *
+ * Temporary debug/bring-up override that replaces the DPM clock levels
+ * populated from the DAL init table (see dcn60_populate_clk_table) with a
+ * fixed set of hardcoded values. Implement any override as needed.
+ */
+static void dcn60_override_clk_table(struct clk_limit_table *clk_table)
+{
+	/* Override as needed */
+	(void)clk_table;
+}
+
 static void dcn60_override_bw_params(struct clk_mgr_internal *clk_mgr,
 		struct clk_bw_params *bw_params)
 {
@@ -603,6 +653,18 @@ static void dcn60_override_bw_params(struct clk_mgr_internal *clk_mgr,
 		bw_params->dc_mode_limit.dtbclk_mhz = 0;
 
 	bw_params->dc_mode_softmax_memclk = bw_params->dc_mode_limit.memclk_mhz;
+
+	/* Override as needed - temporary for debug only. */
+	if (bw_params->utm_qos_model && bw_params->utm_qos_model->dchub_v3) {
+		dcn6_test_initialize_utm_qos_model_v3(
+				(struct utm_qos_model *)bw_params->utm_qos_model,
+				(struct utm_qos_model_dchub_v3 *)bw_params->utm_qos_model->dchub_v3);
+
+		// Override for lsdma here is redundant with the above call, but this may need to outlive
+		// the test_initialize call for debug purposes so keep it here for now.
+		dcn6_test_override_lsdma_bandwidth_v3(
+				(struct utm_qos_model_dchub_v3 *)bw_params->utm_qos_model->dchub_v3);
+	}
 }
 
 /**
@@ -677,7 +739,9 @@ static bool dcn60_fetch_dal_init_table(struct clk_mgr_internal *clk_mgr)
 	clk_mgr->smu_ver = init_table->Header.SmuVersion;
 
 	dcn60_populate_clk_table(clk_mgr, &bw_params->clk_table, init_table);
-	dcn60_populate_dc_mode_limit(&bw_params->dc_mode_limit, init_table);
+	// Comment out for now - DC mode limit is not yet used in DCN6 and the current
+	// population from init table will cause undefined behaviors.
+	//dcn60_populate_dc_mode_limit(&bw_params->dc_mode_limit, init_table);
 
 	bw_params->num_channels = init_table->MemoryConfig.NumUmcChannels;
 	bw_params->dram_channel_width_bytes =
@@ -686,31 +750,10 @@ static bool dcn60_fetch_dal_init_table(struct clk_mgr_internal *clk_mgr)
 	dcn60_populate_utm_qos_model(clk_mgr, &bw_params->utm_qos_model, init_table);
 
 	dcn60_override_bw_params(clk_mgr, bw_params);
+	dcn60_override_clk_table(&bw_params->clk_table);
+	dcn60_override_dc_mode_limit(&bw_params->dc_mode_limit, &bw_params->clk_table);
 
 	return true;
-}
-
-void dcn60_init_clocks(struct clk_mgr *clk_mgr_base)
-{
-	struct clk_mgr_internal *clk_mgr = TO_CLK_MGR_INTERNAL(clk_mgr_base);
-	uint32_t smu_header_ver = 0;
-
-	memset(&(clk_mgr_base->clks), 0, sizeof(struct dc_clocks));
-	clk_mgr_base->clks.p_state_change_support = true;
-	clk_mgr_base->clks.fclk_p_state_change_support = false;
-	clk_mgr->smu_present = !clk_mgr_base->force_smu_not_present /* not force-disabled */
-			&& dcn60_smu_get_msg_header_version(clk_mgr, &smu_header_ver)
-			&& smu_header_ver != 0;
-
-	clk_mgr->dpm_present = clk_mgr->smu_present
-			&& dcn60_fetch_dal_init_table(clk_mgr)
-			&& clk_mgr_base->bw_params->clk_table.num_entries_per_clk.num_dcfclk_levels
-			&& clk_mgr_base->bw_params->clk_table.num_entries_per_clk.num_dtbclk_levels
-			&& clk_mgr_base->bw_params->clk_table.num_entries_per_clk.num_dispclk_levels;
-
-	if (clk_mgr->dpm_present)
-		clk_mgr_base->ctx->dc->res_pool->funcs->update_bw_bounding_box(
-				clk_mgr_base->ctx->dc, clk_mgr_base->bw_params);
 }
 
 static inline uint32_t count_to_khz(uint32_t count, uint32_t timer_ths, uint32_t refclk_khz)
@@ -832,6 +875,80 @@ static void dcn60_dump_clk_registers(struct clk_state_registers_and_bypass *regs
 					internal.CLK8_CLK1_BYPASS_CNTL);
 	}
 }
+
+static void dcn60_dump_and_assign_boot_clocks(struct clk_mgr *clk_mgr_base)
+{
+	struct clk_log_info log_info = {0};
+
+	dcn60_dump_clk_registers(&clk_mgr_base->boot_snapshot, clk_mgr_base, &log_info);
+
+	if (clk_mgr_base->ctx->dc->debug.disable_dtb_ref_clk_switch &&
+			clk_mgr_base->clks.ref_dtbclk_khz != clk_mgr_base->boot_snapshot.dtbclk) {
+		clk_mgr_base->clks.ref_dtbclk_khz = clk_mgr_base->boot_snapshot.dtbclk;
+	}
+
+	if (clk_mgr_base->boot_snapshot.dprefclk != 0)
+		clk_mgr_base->dprefclk_khz = clk_mgr_base->boot_snapshot.dprefclk;
+}
+
+static void dcn60_clock_read_ss_info(struct clk_mgr_internal *clk_mgr)
+{
+	struct dc_bios *bp = clk_mgr->base.ctx->dc_bios;
+	int ss_info_num = bp->funcs->get_ss_entry_number(
+			bp, AS_SIGNAL_TYPE_GPU_PLL);
+
+	if (ss_info_num) {
+		struct spread_spectrum_info info = { { 0 } };
+		enum bp_result result = bp->funcs->get_spread_spectrum_info(
+				bp, AS_SIGNAL_TYPE_GPU_PLL, 0, &info);
+
+		/* SSInfo.spreadSpectrumPercentage !=0 would be sign
+		 * that SS is enabled
+		 */
+		if (result == BP_RESULT_OK &&
+				info.spread_spectrum_percentage != 0) {
+			clk_mgr->ss_on_dprefclk = true;
+			clk_mgr->dprefclk_ss_divider = info.spread_percentage_divider;
+
+			if (info.type.CENTER_MODE == 0) {
+				/* Currently for DP Reference clock we
+				 * need only SS percentage for
+				 * downspread
+				 */
+				clk_mgr->dprefclk_ss_percentage =
+						info.spread_spectrum_percentage;
+			}
+		}
+	}
+}
+
+void dcn60_init_clocks(struct clk_mgr *clk_mgr_base)
+{
+	struct clk_mgr_internal *clk_mgr = TO_CLK_MGR_INTERNAL(clk_mgr_base);
+	uint32_t smu_header_ver = 0;
+
+	memset(&(clk_mgr_base->clks), 0, sizeof(struct dc_clocks));
+	clk_mgr_base->clks.p_state_change_support = true;
+	clk_mgr_base->clks.fclk_p_state_change_support = false;
+
+	dcn60_dump_and_assign_boot_clocks(clk_mgr_base);
+	dcn60_clock_read_ss_info(clk_mgr);
+
+	clk_mgr->smu_present = !clk_mgr_base->force_smu_not_present /* not force-disabled */
+			&& dcn60_smu_get_msg_header_version(clk_mgr, &smu_header_ver)
+			&& smu_header_ver != 0;
+
+	clk_mgr->dpm_present = clk_mgr->smu_present
+			&& dcn60_fetch_dal_init_table(clk_mgr)
+			&& clk_mgr_base->bw_params->clk_table.num_entries_per_clk.num_dcfclk_levels
+			&& clk_mgr_base->bw_params->clk_table.num_entries_per_clk.num_dtbclk_levels
+			&& clk_mgr_base->bw_params->clk_table.num_entries_per_clk.num_dispclk_levels;
+
+	if (clk_mgr->dpm_present)
+		clk_mgr_base->ctx->dc->res_pool->funcs->update_bw_bounding_box(
+				clk_mgr_base->ctx->dc, clk_mgr_base->bw_params);
+}
+
 
 static void dcn60_auto_dpm_test_log(
 		struct dc_clocks *new_clocks,
@@ -1379,37 +1496,6 @@ static void dcn60_update_clocks(struct clk_mgr *clk_mgr_base,
 
 }
 
-static void dcn60_clock_read_ss_info(struct clk_mgr_internal *clk_mgr)
-{
-	struct dc_bios *bp = clk_mgr->base.ctx->dc_bios;
-	int ss_info_num = bp->funcs->get_ss_entry_number(
-			bp, AS_SIGNAL_TYPE_GPU_PLL);
-
-	if (ss_info_num) {
-		struct spread_spectrum_info info = { { 0 } };
-		enum bp_result result = bp->funcs->get_spread_spectrum_info(
-				bp, AS_SIGNAL_TYPE_GPU_PLL, 0, &info);
-
-		/* SSInfo.spreadSpectrumPercentage !=0 would be sign
-		 * that SS is enabled
-		 */
-		if (result == BP_RESULT_OK &&
-				info.spread_spectrum_percentage != 0) {
-			clk_mgr->ss_on_dprefclk = true;
-			clk_mgr->dprefclk_ss_divider = info.spread_percentage_divider;
-
-			if (info.type.CENTER_MODE == 0) {
-				/* Currently for DP Reference clock we
-				 * need only SS percentage for
-				 * downspread
-				 */
-				clk_mgr->dprefclk_ss_percentage =
-						info.spread_spectrum_percentage;
-			}
-		}
-	}
-}
-
 /* Set min memclk to minimum, either constrained by the current mode or DPM0 */
 static void dcn60_set_hard_min_memclk(struct clk_mgr *clk_mgr_base, bool current_mode)
 {
@@ -1615,7 +1701,6 @@ struct clk_mgr_internal *dcn60_clk_mgr_construct(
 		struct dc_context *ctx,
 		struct dccg *dccg)
 {
-	struct clk_log_info log_info = {0};
 	struct dcn60_clk_mgr *clk_mgr60 = kzalloc(sizeof(struct dcn60_clk_mgr), GFP_KERNEL);
 	struct clk_mgr_internal *clk_mgr;
 
@@ -1649,17 +1734,6 @@ struct clk_mgr_internal *dcn60_clk_mgr_construct(
 		/* in case we don't get a value from the register, use default */
 		if (clk_mgr->base.dentist_vco_freq_khz == 0)
 			clk_mgr->base.dentist_vco_freq_khz = 4500000;
-
-		dcn60_dump_clk_registers(&clk_mgr->base.boot_snapshot, &clk_mgr->base, &log_info);
-
-		if (ctx->dc->debug.disable_dtb_ref_clk_switch &&
-				clk_mgr->base.clks.ref_dtbclk_khz != clk_mgr->base.boot_snapshot.dtbclk) {
-			clk_mgr->base.clks.ref_dtbclk_khz = clk_mgr->base.boot_snapshot.dtbclk;
-		}
-
-		if (clk_mgr->base.boot_snapshot.dprefclk != 0)
-			clk_mgr->base.dprefclk_khz = clk_mgr->base.boot_snapshot.dprefclk;
-		dcn60_clock_read_ss_info(clk_mgr);
 
 	clk_mgr->dfs_bypass_enabled = false;
 

@@ -94,7 +94,9 @@ struct dc;
 struct amdgpu_bo;
 struct dmub_srv;
 struct dc_plane_state;
+struct dc_stream_state;
 struct dc_stream_update;
+struct dc_surface_update;
 struct dmub_notification;
 struct dmub_cmd_fused_request;
 
@@ -1236,6 +1238,23 @@ void amdgpu_dm_update_hdcp(struct drm_atomic_commit *state);
 int amdgpu_dm_atomic_setup_commit(struct drm_atomic_commit *state);
 int do_aquire_global_lock(struct drm_device *dev,
 			  struct drm_atomic_commit *state);
+int dm_update_crtc_state(struct amdgpu_display_manager *dm,
+			 struct drm_atomic_commit *state,
+			 struct drm_crtc *crtc,
+			 struct drm_crtc_state *old_crtc_state,
+			 struct drm_crtc_state *new_crtc_state,
+			 bool enable,
+			 bool *lock_and_validation_needed);
+int dm_update_plane_state(struct dc *dc,
+			  struct drm_atomic_commit *state,
+			  struct drm_plane *plane,
+			  struct drm_plane_state *old_plane_state,
+			  struct drm_plane_state *new_plane_state,
+			  bool enable,
+			  bool *lock_and_validation_needed,
+			  bool *is_top_most_overlay);
+int amdgpu_dm_atomic_check(struct drm_device *dev,
+			   struct drm_atomic_commit *state);
 void amdgpu_dm_mod_power_update_streams(struct drm_atomic_commit *state,
 					struct amdgpu_display_manager *dm);
 void amdgpu_dm_mod_power_setup_streams(struct drm_atomic_commit *state,
@@ -1243,8 +1262,16 @@ void amdgpu_dm_mod_power_setup_streams(struct drm_atomic_commit *state,
 int amdgpu_dm_early_fini(struct amdgpu_ip_block *ip_block);
 int dm_sw_fini(struct amdgpu_ip_block *ip_block);
 int dm_oem_i2c_hw_init(struct amdgpu_device *adev);
+void resume_mst_branch_status(struct drm_dp_mst_topology_mgr *mgr);
+void s3_handle_mst(struct drm_device *dev, bool suspend);
 void dm_gpureset_commit_state(struct dc_state *dc_state, struct amdgpu_display_manager *dm);
 int dm_plane_layer_index_cmp(const void *a, const void *b);
+bool update_planes_and_stream_adapter(struct dc *dc,
+				      int update_type,
+				      int planes_count,
+				      struct dc_stream_state *stream,
+				      struct dc_stream_update *stream_update,
+				      struct dc_surface_update *array_of_surface_update);
 int fill_plane_color_attributes(const struct drm_plane_state *plane_state,
 				const enum surface_pixel_format format,
 				enum dc_color_space *color_space);
@@ -1274,6 +1301,13 @@ void amdgpu_dm_services_kunit_set_ops(const struct amdgpu_dm_services_kunit_ops 
 
 struct amdgpu_dm_kunit_ops {
 	uint64_t (*gmc_pd_addr)(struct amdgpu_bo *bo);
+	void (*post_update_surfaces_to_stream)(struct dc *dc);
+	bool (*update_planes_and_stream)(struct dc *dc,
+					 struct dc_surface_update *surface_updates,
+					 int surface_count,
+					 struct dc_stream_state *dc_stream,
+					 struct dc_stream_update *stream_update);
+	struct drm_atomic_commit *(*atomic_helper_suspend)(struct drm_device *dev);
 };
 
 void amdgpu_dm_kunit_set_ops(const struct amdgpu_dm_kunit_ops *ops);
@@ -1287,6 +1321,17 @@ struct dsc_mst_fairness_vars;
 void mmhub_read_system_context(struct amdgpu_device *adev,
 			       struct dc_phy_addr_space_config *pa_config);
 int amdgpu_dm_init_power_module(struct amdgpu_display_manager *dm);
+void dm_gpureset_toggle_interrupts(struct amdgpu_device *adev, struct dc_state *state, bool enable);
+enum dc_status amdgpu_dm_commit_zero_streams(struct dc *dc);
+int dm_cache_state(struct amdgpu_device *adev);
+void dm_destroy_cached_state(struct amdgpu_device *adev);
+void dm_clear_writeback(struct amdgpu_display_manager *dm,
+			struct amdgpu_crtc *acrtc,
+			struct dm_crtc_state *crtc_state);
+void dm_set_writeback(struct amdgpu_display_manager *dm,
+		      struct dm_crtc_state *crtc_state,
+		      struct drm_connector *connector,
+		      struct drm_connector_state *new_con_state);
 int dm_early_init(struct amdgpu_ip_block *ip_block);
 int fill_dc_plane_info_and_addr(struct amdgpu_device *adev,
 				const struct drm_plane_state *plane_state,
@@ -1294,6 +1339,11 @@ int fill_dc_plane_info_and_addr(struct amdgpu_device *adev,
 				struct dc_plane_address *address, bool tmz_surface);
 int dm_update_mst_vcpi_slots_for_dsc(struct drm_atomic_commit *state, struct dc_state *dc_state,
 				     struct dsc_mst_fairness_vars *vars);
+void manage_dm_interrupts(struct amdgpu_device *adev, struct amdgpu_crtc *acrtc,
+			  struct dm_crtc_state *acrtc_state);
+void amdgpu_dm_enable_self_refresh(struct amdgpu_display_manager *dm,
+				   struct amdgpu_crtc *acrtc_attach,
+				   const struct dm_crtc_state *acrtc_state, const u64 current_ts);
 int load_dmcu_fw(struct amdgpu_device *adev);
 int dm_sw_init(struct amdgpu_ip_block *ip_block);
 int dm_late_init(struct amdgpu_ip_block *ip_block);

@@ -659,6 +659,24 @@ amdgpu_userq_create(struct drm_file *filp, union drm_amdgpu_userq *args)
 
 	uq_funcs = adev->userq_funcs[args->in.ip_type];
 	if (!uq_funcs) {
+		switch (args->in.ip_type) {
+		case AMDGPU_HW_IP_GFX:
+		case AMDGPU_HW_IP_COMPUTE:
+			dev_warn_once(adev->dev,
+				      "Usermode queues for GFX/COMPUTE is not supported by the fw "
+				      "on this ASIC (me: %u, pfp: %u, mec: %u, mes: %u)\n",
+				      adev->gfx.me_fw_version, adev->gfx.pfp_fw_version,
+				      adev->gfx.mec_fw_version, adev->mes.fw_version[0]);
+			break;
+		case AMDGPU_HW_IP_DMA:
+			dev_warn_once(adev->dev,
+				      "Usermode queues for SDMA is not supported by the fw "
+				      "on this ASIC (sdma: %u)\n",
+				      adev->sdma.instance[0].fw_version);
+			break;
+		default:
+			break;
+		}
 		r = -EINVAL;
 		goto err_pm_runtime;
 	}
@@ -1556,7 +1574,7 @@ int amdgpu_userq_post_reset(struct amdgpu_device *adev, bool vram_lost)
 	struct amdgpu_usermode_queue *queue;
 	const struct amdgpu_userq_funcs *userq_funcs;
 	unsigned long queue_id;
-	int r = 0;
+	int ret = 0, r;
 
 	xa_for_each(&adev->userq_doorbell_xa, queue_id, queue) {
 		if (queue->state == AMDGPU_USERQ_STATE_HUNG && !vram_lost) {
@@ -1567,6 +1585,7 @@ int amdgpu_userq_post_reset(struct amdgpu_device *adev, bool vram_lost)
 			r = userq_funcs->map(queue);
 			if (r) {
 				dev_err(adev->dev, "Failed to remap queue %ld\n", queue_id);
+				ret = r;
 				continue;
 			}
 			trace_amdgpu_userq_state_changed(queue, AMDGPU_USERQ_STATE_MAPPED);
@@ -1574,5 +1593,5 @@ int amdgpu_userq_post_reset(struct amdgpu_device *adev, bool vram_lost)
 		}
 	}
 
-	return r;
+	return ret;
 }

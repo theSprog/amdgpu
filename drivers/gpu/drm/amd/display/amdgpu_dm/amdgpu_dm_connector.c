@@ -3662,8 +3662,9 @@ void dm_restore_drm_connector_state(struct drm_device *dev,
 	if (acrtc_state->stream->sink != aconnector->dc_sink)
 		dm_force_atomic_commit(&aconnector->base);
 }
+EXPORT_IF_KUNIT(dm_restore_drm_connector_state);
 
-static bool dm_edid_parser_send_cea(struct amdgpu_display_manager *dm,
+STATIC_IFN_KUNIT bool dm_edid_parser_send_cea(struct amdgpu_display_manager *dm,
 		unsigned int offset,
 		unsigned int total_length,
 		u8 *data,
@@ -3720,8 +3721,9 @@ static bool dm_edid_parser_send_cea(struct amdgpu_display_manager *dm,
 
 	return true;
 }
+EXPORT_IF_KUNIT(dm_edid_parser_send_cea);
 
-static bool parse_edid_cea_dmcu(struct amdgpu_display_manager *dm,
+STATIC_IFN_KUNIT bool parse_edid_cea_dmcu(struct amdgpu_display_manager *dm,
 		u8 *edid_ext, int len,
 		struct amdgpu_hdmi_vsdb_info *vsdb_info)
 {
@@ -3763,8 +3765,9 @@ static bool parse_edid_cea_dmcu(struct amdgpu_display_manager *dm,
 
 	return false;
 }
+EXPORT_IF_KUNIT(parse_edid_cea_dmcu);
 
-static bool parse_edid_cea_dmub(struct amdgpu_display_manager *dm,
+STATIC_IFN_KUNIT bool parse_edid_cea_dmub(struct amdgpu_display_manager *dm,
 		u8 *edid_ext, int len,
 		struct amdgpu_hdmi_vsdb_info *vsdb_info)
 {
@@ -3779,8 +3782,9 @@ static bool parse_edid_cea_dmub(struct amdgpu_display_manager *dm,
 
 	return vsdb_info->freesync_supported;
 }
+EXPORT_IF_KUNIT(parse_edid_cea_dmub);
 
-static bool parse_edid_cea(struct amdgpu_dm_connector *aconnector,
+STATIC_IFN_KUNIT bool parse_edid_cea(struct amdgpu_dm_connector *aconnector,
 		u8 *edid_ext, int len,
 		struct amdgpu_hdmi_vsdb_info *vsdb_info)
 {
@@ -3795,6 +3799,7 @@ static bool parse_edid_cea(struct amdgpu_dm_connector *aconnector,
 	mutex_unlock(&adev->dm.dc_lock);
 	return ret;
 }
+EXPORT_IF_KUNIT(parse_edid_cea);
 
 #ifdef HAVE_DRM_DISPLAY_INFO_MONITOR_RANGE
 STATIC_IFN_KUNIT void parse_edid_displayid_vrr(struct drm_connector *connector,
@@ -4171,17 +4176,15 @@ void amdgpu_dm_update_freesync_caps(struct drm_connector *connector,
 	}
 
 	/* Handle MCCS */
-	if (do_mccs)
+	if (do_mccs) {
 		dm_helpers_read_mccs_caps(adev->dm.dc->ctx, amdgpu_dm_connector->dc_link, sink);
 
-	if ((sink->sink_signal == SIGNAL_TYPE_HDMI_TYPE_A ||
-		as_type == FREESYNC_TYPE_PCON_IN_WHITELIST) &&
-		(!sink->edid_caps.freesync_vcp_code ||
-		(sink->edid_caps.freesync_vcp_code && !sink->mccs_caps.freesync_supported)))
-		freesync_capable = false;
+		if (sink->edid_caps.freesync_vcp_code && !sink->mccs_caps.freesync_supported)
+			freesync_capable = false;
 
-	if (do_mccs && sink->mccs_caps.freesync_supported && freesync_capable)
-		dm_helpers_mccs_vcp_set(adev->dm.dc->ctx, amdgpu_dm_connector->dc_link, sink);
+		if (sink->mccs_caps.freesync_supported && freesync_capable)
+			dm_helpers_mccs_vcp_set(adev->dm.dc->ctx, amdgpu_dm_connector->dc_link, sink);
+	}
 
 update:
 	if (dm_con_state)

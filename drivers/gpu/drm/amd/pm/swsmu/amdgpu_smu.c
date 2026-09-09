@@ -69,6 +69,7 @@ static int smu_handle_task(struct smu_context *smu,
 			   enum amd_dpm_forced_level level,
 			   enum amd_pp_task task_id);
 static int smu_reset(struct smu_context *smu);
+static int smu_set_ac_dc(struct smu_context *smu);
 static int smu_set_fan_speed_pwm(void *handle, u32 speed);
 static int smu_set_fan_control_mode(void *handle, u32 value);
 static int smu_set_ppt_limit(void *handle, uint32_t limit_type, uint32_t limit);
@@ -972,7 +973,7 @@ static int smu_late_init(struct amdgpu_ip_block *ip_block)
 	 * is unnecessary.
 	 */
 	adev->pm.ac_power = power_supply_is_system_supplied() > 0;
-	smu_set_ac_dc(smu, false);
+	smu_set_ac_dc(smu);
 
 	if ((amdgpu_ip_version(adev, MP1_HWIP, 0) == IP_VERSION(13, 0, 1)) ||
 	    (amdgpu_ip_version(adev, MP1_HWIP, 0) == IP_VERSION(13, 0, 3)))
@@ -2786,7 +2787,7 @@ static int smu_set_watermarks_for_clock_ranges(void *handle,
 	return smu_set_watermarks_table(smu, clock_ranges);
 }
 
-int smu_set_ac_dc(struct smu_context *smu, bool restore_ppt_policy)
+static int smu_set_ac_dc(struct smu_context *smu)
 {
 	int ret = 0;
 
@@ -2806,10 +2807,17 @@ int smu_set_ac_dc(struct smu_context *smu, bool restore_ppt_policy)
 		}
 	}
 
-	if (restore_ppt_policy)
-		smu_restore_ppt_limits(smu, true);
-
 	return 0;
+}
+
+static void smu_notify_ac_dc(void *handle)
+{
+	struct smu_context *smu = handle;
+
+	if (smu_set_ac_dc(smu))
+		return;
+
+	smu_restore_ppt_limits(smu, true);
 }
 
 const struct amd_ip_funcs smu_ip_funcs = {
@@ -4011,6 +4019,7 @@ static const struct amd_pm_funcs swsmu_pm_funcs = {
 	.set_pp_table            = smu_sys_set_pp_table,
 	.switch_power_profile    = smu_switch_power_profile,
 	.pause_power_profile     = smu_pause_power_profile,
+	.notify_ac_dc            = smu_notify_ac_dc,
 	/* export to amdgpu */
 	.dispatch_tasks          = smu_handle_dpm_task,
 	.load_firmware           = smu_load_microcode,

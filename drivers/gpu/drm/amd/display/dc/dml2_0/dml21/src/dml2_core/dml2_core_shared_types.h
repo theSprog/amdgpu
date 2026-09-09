@@ -1070,6 +1070,7 @@ struct dml2_core_internal_mode_program {
 	double urg_bandwidth_available[dml2_core_internal_soc_state_max][dml2_core_internal_bw_max];
 	double urg_bandwidth_available_vm_only[dml2_core_internal_soc_state_max]; // the min of sdp bw and dram_vm_only bw, sdp has no different derate for vm/non-vm traffic etc.
 	double urg_bandwidth_available_pixel_and_vm[dml2_core_internal_soc_state_max]; // the min of sdp bw and dram_pixel_and_vm bw, sdp has no different derate for vm/non-vm etc.
+	double non_urg_bandwidth_available[dml2_core_internal_soc_state_max][dml2_core_internal_bw_max];
 
 	double dcc_dram_bw_nom_overhead_factor_p0[DML2_MAX_PLANES];
 	double dcc_dram_bw_nom_overhead_factor_p1[DML2_MAX_PLANES];
@@ -1658,9 +1659,6 @@ struct dml2_core_shared_CalculateFlipSchedule_locals {
 	double num_rows;
 	double hvm_scaled_row_bytes;
 	double hvm_scaled_vm_row_bytes;
-	double vm_time_budget;
-	double row_time_budget;
-	double vm_and_row_time_budget;
 	bool dual_plane;
 };
 
@@ -2309,16 +2307,17 @@ struct dml2_core_calcs_calculate_alternate_params {
 	unsigned int *NoOfDPP;
 	unsigned int max_num_dpp;
 	double dram_blackout_us;
-	double *VActiveLatencyHidingUs;
 	unsigned int *svp0_dst_lines;
 	unsigned int *svp1_dst_lines;
 	unsigned int *svp_req_limit;
 	double dcn_non_urgent_bandwidth_kbps;
+	double max_lsdma_bandwidth_kbps;
 	unsigned int alt_chan_fw_delay_us;
 	double *dst_y_per_vm_vblank;
 	double *dst_y_per_row_vblank;
 	unsigned int *DSTYAfterScaler;
 	enum dml2_odm_mode *ODMMode;
+	bool alt_chan_in_use;
 
 	/* output params */
 	unsigned int *svp0_max_bytes;

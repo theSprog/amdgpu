@@ -1759,6 +1759,30 @@ enum dmub_gpint_command {
 	 *       1 - Enable panel polarity
 	 */
 	DMUB_GPINT__PANEL_POLARITY_DEBUG_ENABLE = 140,
+	/**
+	 * DESC: Reset the boot-time cumulative PHY-off residency counter.
+	 * PARAMS: [7:0] panel_inst
+	 * RETURN: 0 (ACK)
+	 */
+	DMUB_GPINT__REPLAY_RESET_CUMULATIVE_RESIDENCY = 141,
+	/**
+	 * DESC: Query boot-time cumulative PHY-off residency, low 32 bits (microseconds).
+	 * PARAMS: [7:0] panel_inst
+	 * RETURN: Lower 32 bits of accumulated PHY-off time in microseconds.
+	 */
+	DMUB_GPINT__REPLAY_GET_CUMULATIVE_RESIDENCY_US_LO = 142,
+	/**
+	 * DESC: Query boot-time cumulative PHY-off residency, high 32 bits (microseconds).
+	 * PARAMS: [7:0] panel_inst
+	 * RETURN: Upper 32 bits of accumulated PHY-off time in microseconds.
+	 */
+	DMUB_GPINT__REPLAY_GET_CUMULATIVE_RESIDENCY_US_HI = 143,
+	/**
+	 * DESC: Compute + log cumulative PHY-off residency snapshot; return milli-percent.
+	 * PARAMS: [7:0] panel_inst
+	 * RETURN: Residency in milli-percent (0-100000). Also emits DMUB trace log.
+	 */
+	DMUB_GPINT__REPLAY_SNAPSHOT_CUMULATIVE_RESIDENCY = 144,
 };
 
 /**
@@ -2777,6 +2801,7 @@ struct dmub_fams2_stream_static_state {
 			uint8_t is_drr : 1; // stream is DRR enabled
 			uint8_t clamp_vtotal_min : 1; // clamp vtotal to min instead of nominal
 			uint8_t min_ttu_vblank_usable : 1; // if min ttu vblank is above wm, no force pstate is needed in blank
+			uint8_t imm_restore_drr : 1; // does not wait to latch DRR vtotal on restore
 		} bits;
 		uint8_t all;
 	} config;
@@ -2809,6 +2834,7 @@ struct dmub_fams2_cmd_stream_static_base_state {
 			uint8_t is_drr : 1; // stream is DRR enabled
 			uint8_t clamp_vtotal_min : 1; // clamp vtotal to min instead of nominal
 			uint8_t min_ttu_vblank_usable : 1; // if min ttu vblank is above wm, no force pstate is needed in blank
+			uint8_t imm_restore_drr : 1; // does not wait to latch DRR vtotal on restore
 		} bits;
 		uint8_t all;
 	} config;

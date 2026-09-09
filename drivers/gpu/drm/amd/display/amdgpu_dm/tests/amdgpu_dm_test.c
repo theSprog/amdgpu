@@ -327,6 +327,119 @@ static void dm_test_plane_layer_index_cmp_ascending(struct kunit *test)
 	KUNIT_EXPECT_LT(test, dm_plane_layer_index_cmp(&sa, &sb), 0);
 }
 
+struct dm_test_plane_update_ops_ctx {
+	struct dc *dc;
+	struct dc_surface_update *surface_updates;
+	struct dc_stream_state *stream;
+	struct dc_stream_update *stream_update;
+	int surface_count;
+	unsigned int call_seq;
+	unsigned int post_update_seq;
+	unsigned int update_seq;
+	bool update_ret;
+};
+
+static struct dm_test_plane_update_ops_ctx dm_test_plane_update_ctx;
+
+static void dm_test_post_update_surfaces_to_stream(struct dc *dc)
+{
+	dm_test_plane_update_ctx.dc = dc;
+	dm_test_plane_update_ctx.post_update_seq = ++dm_test_plane_update_ctx.call_seq;
+}
+
+static bool dm_test_update_planes_and_stream(struct dc *dc,
+					     struct dc_surface_update *surface_updates,
+					     int surface_count,
+					     struct dc_stream_state *dc_stream,
+					     struct dc_stream_update *stream_update)
+{
+	dm_test_plane_update_ctx.dc = dc;
+	dm_test_plane_update_ctx.surface_updates = surface_updates;
+	dm_test_plane_update_ctx.surface_count = surface_count;
+	dm_test_plane_update_ctx.stream = dc_stream;
+	dm_test_plane_update_ctx.stream_update = stream_update;
+	dm_test_plane_update_ctx.update_seq = ++dm_test_plane_update_ctx.call_seq;
+
+	return dm_test_plane_update_ctx.update_ret;
+}
+
+static const struct amdgpu_dm_kunit_ops dm_test_plane_update_ops = {
+	.post_update_surfaces_to_stream = dm_test_post_update_surfaces_to_stream,
+	.update_planes_and_stream = dm_test_update_planes_and_stream,
+};
+
+static void dm_test_restore_dm_ops(void *ctx)
+{
+	amdgpu_dm_kunit_set_ops(NULL);
+}
+
+static void dm_test_install_dm_ops(struct kunit *test,
+				   const struct amdgpu_dm_kunit_ops *ops)
+{
+	amdgpu_dm_kunit_set_ops(ops);
+	KUNIT_ASSERT_EQ(test,
+			kunit_add_action_or_reset(test, dm_test_restore_dm_ops, NULL), 0);
+}
+
+/**
+ * dm_test_update_planes_adapter_sorts_and_forwards - Test sorting and call order
+ * @test: The KUnit test context
+ */
+static void dm_test_update_planes_adapter_sorts_and_forwards(struct kunit *test)
+{
+	struct dc_surface_update *updates;
+	struct dc_plane_state *planes;
+	struct dc_stream_update *stream_update;
+	struct dc_stream_state *stream;
+	struct dc *dc;
+
+	updates = kunit_kcalloc(test, 3, sizeof(*updates), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, updates);
+	planes = kunit_kcalloc(test, 3, sizeof(*planes), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, planes);
+	stream_update = kunit_kzalloc(test, sizeof(*stream_update), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, stream_update);
+	stream = dm_kunit_alloc_stream(test, NULL);
+	dc = dm_kunit_alloc_dc_with_ctx(test);
+
+	planes[0].layer_index = 1;
+	planes[1].layer_index = 5;
+	planes[2].layer_index = 3;
+	updates[0].surface = &planes[0];
+	updates[1].surface = &planes[1];
+	updates[2].surface = &planes[2];
+	dm_test_plane_update_ctx = (struct dm_test_plane_update_ops_ctx) {
+		.update_ret = true,
+	};
+	dm_test_install_dm_ops(test, &dm_test_plane_update_ops);
+
+	KUNIT_EXPECT_TRUE(test, update_planes_and_stream_adapter(dc, UPDATE_TYPE_FAST, 3,
+								 stream, stream_update, updates));
+	KUNIT_EXPECT_EQ(test, updates[0].surface->layer_index, 5);
+	KUNIT_EXPECT_EQ(test, updates[1].surface->layer_index, 3);
+	KUNIT_EXPECT_EQ(test, updates[2].surface->layer_index, 1);
+	KUNIT_EXPECT_PTR_EQ(test, dm_test_plane_update_ctx.dc, dc);
+	KUNIT_EXPECT_PTR_EQ(test, dm_test_plane_update_ctx.surface_updates, &updates[0]);
+	KUNIT_EXPECT_EQ(test, dm_test_plane_update_ctx.surface_count, 3);
+	KUNIT_EXPECT_PTR_EQ(test, dm_test_plane_update_ctx.stream, stream);
+	KUNIT_EXPECT_PTR_EQ(test, dm_test_plane_update_ctx.stream_update, stream_update);
+	KUNIT_EXPECT_LT(test, dm_test_plane_update_ctx.post_update_seq,
+			dm_test_plane_update_ctx.update_seq);
+}
+
+/**
+ * dm_test_update_planes_adapter_propagates_failure - Test DC failure is returned
+ * @test: The KUnit test context
+ */
+static void dm_test_update_planes_adapter_propagates_failure(struct kunit *test)
+{
+	dm_test_plane_update_ctx = (struct dm_test_plane_update_ops_ctx) { 0 };
+	dm_test_install_dm_ops(test, &dm_test_plane_update_ops);
+
+	KUNIT_EXPECT_FALSE(test, update_planes_and_stream_adapter(NULL, UPDATE_TYPE_FAST, 0,
+								  NULL, NULL, NULL));
+}
+
 /* Tests for fill_plane_color_attributes() */
 
 /**
@@ -2877,6 +2990,21 @@ static void dm_test_atomic_setup_commit_empty(struct kunit *test)
 			0);
 }
 
+/**
+ * dm_test_atomic_check_empty - Test an empty atomic commit needs no DC validation
+ * @test: The KUnit test context
+ */
+static void dm_test_atomic_check_empty(struct kunit *test)
+{
+	struct amdgpu_device *adev = dm_kunit_alloc_adev(test);
+	struct drm_atomic_commit *state = dm_test_alloc_commit(test, adev);
+
+	adev->dm.dc = dm_kunit_alloc_dc_with_ctx(test);
+
+	KUNIT_EXPECT_EQ(test, amdgpu_dm_atomic_check(&adev->ddev, state), 0);
+	KUNIT_EXPECT_EQ(test, state->num_private_objs, 0U);
+}
+
 /*
  * A commit with one connector of @type bound to a CRTC that keeps its stream.
  * The content protection state is unchanged, so amdgpu_dm_update_hdcp() walks
@@ -3060,6 +3188,64 @@ static void dm_test_aquire_global_lock_waits_commit(struct kunit *test)
 }
 
 /**
+ * dm_test_update_crtc_state_unchanged - Test unchanged state needs no validation
+ * @test: The KUnit test context
+ */
+static void dm_test_update_crtc_state_unchanged(struct kunit *test)
+{
+	struct dm_test_reset_plane_ctx *ctx = dm_test_reset_plane_ctx_alloc(test);
+	bool lock_and_validation_needed = false;
+
+	ctx->adev->dm.adev = ctx->adev;
+	KUNIT_EXPECT_EQ(test,
+			dm_update_crtc_state(&ctx->adev->dm, ctx->state, ctx->crtc,
+					     &ctx->old_crtc_state->base,
+					     &ctx->new_crtc_state->base, true,
+					     &lock_and_validation_needed),
+			0);
+	KUNIT_EXPECT_FALSE(test, lock_and_validation_needed);
+	KUNIT_EXPECT_NULL(test, ctx->new_crtc_state->stream);
+}
+
+/**
+ * dm_test_update_plane_state_detached - Test a detached plane needs no DC update
+ * @test: The KUnit test context
+ */
+static void dm_test_update_plane_state_detached(struct kunit *test)
+{
+	struct amdgpu_device *adev = dm_kunit_alloc_adev(test);
+	struct dm_plane_state *old_plane_state;
+	struct dm_plane_state *new_plane_state;
+	struct drm_plane *plane;
+	bool lock_and_validation_needed = false;
+	bool is_top_most_overlay = true;
+
+	old_plane_state = kunit_kzalloc(test, sizeof(*old_plane_state), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, old_plane_state);
+	new_plane_state = kunit_kzalloc(test, sizeof(*new_plane_state), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, new_plane_state);
+	plane = kunit_kzalloc(test, sizeof(*plane), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, plane);
+	adev->reset_domain = kunit_kzalloc(test, sizeof(*adev->reset_domain), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, adev->reset_domain);
+
+	adev->ip_versions[DCE_HWIP][0] = IP_VERSION(3, 2, 0);
+	plane->dev = &adev->ddev;
+	plane->type = DRM_PLANE_TYPE_PRIMARY;
+
+	KUNIT_EXPECT_EQ(test,
+			dm_update_plane_state(NULL, dm_test_alloc_commit(test, adev), plane,
+					      &old_plane_state->base,
+					      &new_plane_state->base, false,
+					      &lock_and_validation_needed,
+					      &is_top_most_overlay),
+			0);
+	KUNIT_EXPECT_FALSE(test, lock_and_validation_needed);
+	KUNIT_EXPECT_TRUE(test, is_top_most_overlay);
+	KUNIT_EXPECT_NULL(test, new_plane_state->dc_state);
+}
+
+/**
  * dm_test_mod_power_update_streams_empty - Test an empty commit updates no streams
  * @test: The KUnit test context
  */
@@ -3181,6 +3367,37 @@ static void dm_test_oem_i2c_hw_init_no_device(struct kunit *test)
 
 	KUNIT_EXPECT_EQ(test, dm_oem_i2c_hw_init(adev), 0);
 	KUNIT_EXPECT_NULL(test, adev->dm.oem_i2c);
+}
+
+/**
+ * dm_test_resume_mst_no_primary - Test a missing primary branch releases the topology lock
+ * @test: The KUnit test context
+ */
+static void dm_test_resume_mst_no_primary(struct kunit *test)
+{
+	struct drm_dp_mst_topology_mgr *mgr;
+
+	mgr = kunit_kzalloc(test, sizeof(*mgr), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, mgr);
+	mutex_init(&mgr->lock);
+
+	resume_mst_branch_status(mgr);
+
+	KUNIT_ASSERT_TRUE(test, mutex_trylock(&mgr->lock));
+	mutex_unlock(&mgr->lock);
+}
+
+/**
+ * dm_test_s3_handle_mst_empty - Test empty connector lists need no MST action
+ * @test: The KUnit test context
+ */
+static void dm_test_s3_handle_mst_empty(struct kunit *test)
+{
+	struct amdgpu_device *adev = dm_kunit_alloc_adev(test);
+
+	s3_handle_mst(&adev->ddev, true);
+
+	KUNIT_EXPECT_TRUE(test, list_empty(&adev->ddev.mode_config.connector_list));
 }
 
 /**
@@ -3422,11 +3639,6 @@ static const struct amdgpu_dm_kunit_ops dm_test_dm_ops = {
 	.gmc_pd_addr = dm_test_gmc_pd_addr,
 };
 
-static void dm_test_restore_dm_ops(void *ctx)
-{
-	amdgpu_dm_kunit_set_ops(NULL);
-}
-
 /*
  * A device whose AGP aperture is disabled (bot above top), so the frame buffer
  * alone decides the logical address range.
@@ -3435,8 +3647,7 @@ static struct amdgpu_device *dm_test_mmhub_adev(struct kunit *test)
 {
 	struct amdgpu_device *adev = dm_kunit_alloc_adev(test);
 
-	amdgpu_dm_kunit_set_ops(&dm_test_dm_ops);
-	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, dm_test_restore_dm_ops, NULL), 0);
+	dm_test_install_dm_ops(test, &dm_test_dm_ops);
 
 	adev->gmc.agp_start = 0x2000000;
 	adev->gmc.agp_end = 0x1000000;
@@ -3803,6 +4014,258 @@ static void dm_test_plane_info_layer_and_blending(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, ctx->plane_info.global_alpha_value, 0x7f);
 }
 
+/* Tests for amdgpu_dm_enable_self_refresh() */
+
+struct dm_test_sr_ctx {
+	struct amdgpu_display_manager *dm;
+	struct amdgpu_crtc *acrtc;
+	struct dm_crtc_state *acrtc_state;
+	struct amdgpu_dm_connector *aconn;
+	struct dc_link *link;
+};
+
+/*
+ * A fast-update CRTC whose stream has a self-refresh capable link. The power
+ * module stays NULL, which every mod_power entry point treats as a no-op.
+ */
+static struct dm_test_sr_ctx *dm_test_sr_ctx_alloc(struct kunit *test)
+{
+	struct dm_test_sr_ctx *ctx;
+
+	ctx = kunit_kzalloc(test, sizeof(*ctx), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, ctx);
+
+	ctx->dm = dm_kunit_alloc_dm(test);
+	ctx->acrtc = kunit_kzalloc(test, sizeof(*ctx->acrtc), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, ctx->acrtc);
+	ctx->acrtc_state = kunit_kzalloc(test, sizeof(*ctx->acrtc_state), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, ctx->acrtc_state);
+	ctx->aconn = kunit_kzalloc(test, sizeof(*ctx->aconn), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, ctx->aconn);
+
+	ctx->link = dm_kunit_alloc_link(test);
+	ctx->acrtc_state->stream = dm_kunit_alloc_stream(test, ctx->link);
+	ctx->acrtc_state->stream->dm_stream_context = ctx->aconn;
+	ctx->acrtc_state->update_type = UPDATE_TYPE_FAST;
+
+	return ctx;
+}
+
+static void dm_test_enable_sr(struct dm_test_sr_ctx *ctx, u64 current_ts)
+{
+	amdgpu_dm_enable_self_refresh(ctx->dm, ctx->acrtc, ctx->acrtc_state,
+				      current_ts);
+}
+
+/**
+ * dm_test_self_refresh_full_update - Test a full update blocks self refresh
+ * @test: The KUnit test context
+ */
+static void dm_test_self_refresh_full_update(struct kunit *test)
+{
+	struct dm_test_sr_ctx *ctx = dm_test_sr_ctx_alloc(test);
+
+	ctx->acrtc_state->update_type = UPDATE_TYPE_FULL;
+	ctx->link->psr_settings.psr_feature_enabled = true;
+	ctx->acrtc->dm_irq_params.allow_sr_entry = true;
+
+	dm_test_enable_sr(ctx, 0);
+
+	KUNIT_EXPECT_FALSE(test, ctx->acrtc->dm_irq_params.allow_sr_entry);
+}
+
+/**
+ * dm_test_self_refresh_unsupported_link - Test a link without PSR or Replay
+ * @test: The KUnit test context
+ */
+static void dm_test_self_refresh_unsupported_link(struct kunit *test)
+{
+	struct dm_test_sr_ctx *ctx = dm_test_sr_ctx_alloc(test);
+
+	ctx->acrtc->dm_irq_params.allow_sr_entry = true;
+
+	dm_test_enable_sr(ctx, 0);
+
+	KUNIT_EXPECT_FALSE(test, ctx->acrtc->dm_irq_params.allow_sr_entry);
+}
+
+/**
+ * dm_test_self_refresh_decrements_skip_count - Test the skip count gates entry
+ * @test: The KUnit test context
+ */
+static void dm_test_self_refresh_decrements_skip_count(struct kunit *test)
+{
+	struct dm_test_sr_ctx *ctx = dm_test_sr_ctx_alloc(test);
+
+	ctx->link->psr_settings.psr_feature_enabled = true;
+	ctx->aconn->sr_skip_count = 2;
+
+	dm_test_enable_sr(ctx, 0);
+
+	KUNIT_EXPECT_EQ(test, ctx->aconn->sr_skip_count, 1);
+	KUNIT_EXPECT_FALSE(test, ctx->acrtc->dm_irq_params.allow_sr_entry);
+}
+
+/**
+ * dm_test_self_refresh_allows_entry - Test a drained skip count allows entry
+ * @test: The KUnit test context
+ */
+static void dm_test_self_refresh_allows_entry(struct kunit *test)
+{
+	struct dm_test_sr_ctx *ctx = dm_test_sr_ctx_alloc(test);
+
+	ctx->link->psr_settings.psr_feature_enabled = true;
+	ctx->aconn->sr_skip_count = 1;
+
+	/* Well past the 500ms settle window, so the events are cleared. */
+	dm_test_enable_sr(ctx, 2ULL * NSEC_PER_SEC);
+
+	KUNIT_EXPECT_EQ(test, ctx->aconn->sr_skip_count, 0);
+	KUNIT_EXPECT_TRUE(test, ctx->acrtc->dm_irq_params.allow_sr_entry);
+}
+
+/**
+ * dm_test_self_refresh_within_settle_window - Test a recent damage change holds off
+ * @test: The KUnit test context
+ */
+static void dm_test_self_refresh_within_settle_window(struct kunit *test)
+{
+	struct dm_test_sr_ctx *ctx = dm_test_sr_ctx_alloc(test);
+
+	ctx->link->psr_settings.psr_feature_enabled = true;
+	ctx->link->psr_settings.psr_dirty_rects_change_timestamp_ns = 1;
+
+	dm_test_enable_sr(ctx, 2);
+
+	KUNIT_EXPECT_TRUE(test, ctx->acrtc->dm_irq_params.allow_sr_entry);
+}
+
+/**
+ * dm_test_self_refresh_replay_link - Test a Replay capable link takes the same path
+ * @test: The KUnit test context
+ */
+static void dm_test_self_refresh_replay_link(struct kunit *test)
+{
+	struct dm_test_sr_ctx *ctx = dm_test_sr_ctx_alloc(test);
+
+	ctx->link->replay_settings.replay_feature_enabled = true;
+
+	dm_test_enable_sr(ctx, 2ULL * NSEC_PER_SEC);
+
+	KUNIT_EXPECT_TRUE(test, ctx->acrtc->dm_irq_params.allow_sr_entry);
+}
+
+/* Tests for manage_dm_interrupts() */
+
+struct dm_test_irq_mgmt_ctx {
+	struct amdgpu_device *adev;
+	struct amdgpu_crtc *acrtc;
+	struct dm_crtc_state *acrtc_state;
+};
+
+/*
+ * A CRTC with a single initialised vblank and a 1080p60 stream timing, which
+ * is what the vblank off-delay estimate is derived from.
+ */
+static struct dm_test_irq_mgmt_ctx *dm_test_irq_mgmt_ctx_alloc(struct kunit *test)
+{
+	struct dm_test_irq_mgmt_ctx *ctx;
+	struct dc_crtc_timing *timing;
+
+	ctx = kunit_kzalloc(test, sizeof(*ctx), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, ctx);
+
+	ctx->adev = dm_kunit_alloc_adev(test);
+	KUNIT_ASSERT_EQ(test, drm_vblank_init(&ctx->adev->ddev, 1), 0);
+
+	ctx->acrtc = kunit_kzalloc(test, sizeof(*ctx->acrtc), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, ctx->acrtc);
+	ctx->acrtc_state = kunit_kzalloc(test, sizeof(*ctx->acrtc_state), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, ctx->acrtc_state);
+
+	ctx->adev->mode_info.num_crtc = 1;
+	ctx->acrtc->base.dev = &ctx->adev->ddev;
+	ctx->acrtc->crtc_id = 0;
+
+	ctx->acrtc_state->stream = dm_kunit_alloc_stream(test, NULL);
+	timing = &ctx->acrtc_state->stream->timing;
+	timing->h_total = 2200;
+	timing->v_total = 1125;
+	timing->pix_clk_100hz = 1485000;
+
+	return ctx;
+}
+
+/**
+ * dm_test_manage_interrupts_offdelay - Test the off delay is derived from timing
+ * @test: The KUnit test context
+ *
+ * DCN3.0 also takes the extra vupdate reference. The IRQ subsystem is not
+ * installed, so amdgpu_irq_get() only reports the missing source.
+ */
+static void dm_test_manage_interrupts_offdelay(struct kunit *test)
+{
+	struct dm_test_irq_mgmt_ctx *ctx = dm_test_irq_mgmt_ctx_alloc(test);
+
+	/* Pre-DCN3.5 keeps the two frame off delay. */
+	ctx->adev->ip_versions[DCE_HWIP][0] = IP_VERSION(3, 0, 0);
+
+	manage_dm_interrupts(ctx->adev, ctx->acrtc, ctx->acrtc_state);
+
+	KUNIT_EXPECT_EQ(test, ctx->adev->ddev.vblank[0].config.offdelay_ms, 34);
+	KUNIT_EXPECT_FALSE(test, ctx->adev->ddev.vblank[0].config.disable_immediate);
+}
+
+/**
+ * dm_test_manage_interrupts_offdelay_fallback - Test a zero delay falls back to 30ms
+ * @test: The KUnit test context
+ */
+static void dm_test_manage_interrupts_offdelay_fallback(struct kunit *test)
+{
+	struct dm_test_irq_mgmt_ctx *ctx = dm_test_irq_mgmt_ctx_alloc(test);
+
+	ctx->adev->ip_versions[DCE_HWIP][0] = IP_VERSION(3, 1, 2);
+	/* A zero line count makes the computed delay round down to zero. */
+	ctx->acrtc_state->stream->timing.v_total = 0;
+
+	manage_dm_interrupts(ctx->adev, ctx->acrtc, ctx->acrtc_state);
+
+	KUNIT_EXPECT_EQ(test, ctx->adev->ddev.vblank[0].config.offdelay_ms, 30);
+}
+
+/**
+ * dm_test_manage_interrupts_apu_instant_off - Test DCN3.5 APUs use instant off
+ * @test: The KUnit test context
+ */
+static void dm_test_manage_interrupts_apu_instant_off(struct kunit *test)
+{
+	struct dm_test_irq_mgmt_ctx *ctx = dm_test_irq_mgmt_ctx_alloc(test);
+
+	ctx->adev->ip_versions[DCE_HWIP][0] = IP_VERSION(3, 5, 0);
+	ctx->adev->flags |= AMD_IS_APU;
+
+	manage_dm_interrupts(ctx->adev, ctx->acrtc, ctx->acrtc_state);
+
+	KUNIT_EXPECT_EQ(test, ctx->adev->ddev.vblank[0].config.offdelay_ms, 1);
+	KUNIT_EXPECT_TRUE(test, ctx->adev->ddev.vblank[0].config.disable_immediate);
+}
+
+/**
+ * dm_test_manage_interrupts_disable - Test a NULL CRTC state turns vblank off
+ * @test: The KUnit test context
+ */
+static void dm_test_manage_interrupts_disable(struct kunit *test)
+{
+	struct dm_test_irq_mgmt_ctx *ctx = dm_test_irq_mgmt_ctx_alloc(test);
+
+	ctx->adev->ip_versions[DCE_HWIP][0] = IP_VERSION(3, 0, 0);
+	manage_dm_interrupts(ctx->adev, ctx->acrtc, ctx->acrtc_state);
+
+	manage_dm_interrupts(ctx->adev, ctx->acrtc, NULL);
+
+	KUNIT_EXPECT_FALSE(test, ctx->adev->ddev.vblank[0].enabled);
+}
+
 /* Tests for dm_early_init() */
 
 #define DM_TEST_ATOM_BIOS_SIZE	512
@@ -3963,6 +4426,148 @@ static void dm_test_early_init_unsupported_version(struct kunit *test)
 
 	KUNIT_EXPECT_EQ(test, dm_test_run_early_init(adev), -EINVAL);
 	KUNIT_EXPECT_FALSE(test, adev->dc_enabled);
+}
+
+/* Tests for the remaining suspend and resume helpers */
+
+/**
+ * dm_test_commit_zero_streams_empty - Test committing an already empty DC state
+ * @test: The KUnit test context
+ */
+static void dm_test_commit_zero_streams_empty(struct kunit *test)
+{
+	struct dc *dc = dm_kunit_alloc_dc_with_ctx(test);
+
+	dc->current_state = dm_kunit_alloc_dc_state(test);
+	KUNIT_ASSERT_NOT_NULL(test, dc->current_state);
+
+	KUNIT_EXPECT_EQ(test, (int)amdgpu_dm_commit_zero_streams(dc), (int)DC_OK);
+}
+
+/**
+ * dm_test_cache_state_empty_device - Test caching an empty DRM atomic state
+ * @test: The KUnit test context
+ */
+static void dm_test_cache_state_empty_device(struct kunit *test)
+{
+	struct amdgpu_device *adev = dm_kunit_alloc_adev(test);
+
+	KUNIT_ASSERT_EQ(test, dm_cache_state(adev), 0);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, adev->dm.cached_state);
+
+	dm_destroy_cached_state(adev);
+	KUNIT_EXPECT_NULL(test, adev->dm.cached_state);
+}
+
+static struct drm_atomic_commit *dm_test_atomic_helper_suspend_error(struct drm_device *dev)
+{
+	return ERR_PTR(-EIO);
+}
+
+static const struct amdgpu_dm_kunit_ops dm_test_cache_state_ops = {
+	.atomic_helper_suspend = dm_test_atomic_helper_suspend_error,
+};
+
+/**
+ * dm_test_cache_state_error - Test atomic suspend errors are returned and cleared
+ * @test: The KUnit test context
+ */
+static void dm_test_cache_state_error(struct kunit *test)
+{
+	struct amdgpu_device *adev = dm_kunit_alloc_adev(test);
+
+	dm_test_install_dm_ops(test, &dm_test_cache_state_ops);
+
+	KUNIT_EXPECT_EQ(test, dm_cache_state(adev), -EIO);
+	KUNIT_EXPECT_NULL(test, adev->dm.cached_state);
+}
+
+/**
+ * dm_test_destroy_cached_state_none - Test no cached state is a no-op
+ * @test: The KUnit test context
+ */
+static void dm_test_destroy_cached_state_none(struct kunit *test)
+{
+	struct amdgpu_device *adev = dm_kunit_alloc_adev(test);
+
+	dm_destroy_cached_state(adev);
+
+	KUNIT_EXPECT_NULL(test, adev->dm.cached_state);
+}
+
+static bool dm_test_update_bandwidth(struct dc *dc, struct dc_state *context)
+{
+	return true;
+}
+
+/**
+ * dm_test_clear_writeback_removes_stream - Test teardown removes the stream writeback
+ * @test: The KUnit test context
+ */
+static void dm_test_clear_writeback_removes_stream(struct kunit *test)
+{
+	struct amdgpu_display_manager *dm;
+	struct dm_crtc_state *crtc_state;
+	struct amdgpu_crtc *acrtc;
+	struct dc_stream_state *stream;
+
+	dm = dm_kunit_alloc_dm(test);
+	crtc_state = kunit_kzalloc(test, sizeof(*crtc_state), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, crtc_state);
+	acrtc = kunit_kzalloc(test, sizeof(*acrtc), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, acrtc);
+	stream = dm_kunit_alloc_stream(test, NULL);
+	dm->dc->hwss.update_bandwidth = dm_test_update_bandwidth;
+	crtc_state->stream = stream;
+	stream->num_wb_info = 1;
+	stream->writeback_info[0].dwb_pipe_inst = 0;
+
+	dm_clear_writeback(dm, acrtc, crtc_state);
+
+	KUNIT_EXPECT_EQ(test, stream->num_wb_info, 0U);
+}
+
+/**
+ * dm_test_set_writeback_no_pipe - Test a stream without a DC pipe is not armed
+ * @test: The KUnit test context
+ */
+static void dm_test_set_writeback_no_pipe(struct kunit *test)
+{
+	struct amdgpu_device *adev = dm_kunit_alloc_adev(test);
+	struct drm_writeback_connector *wb_conn;
+	struct drm_connector_state *conn_state;
+	struct drm_writeback_job *job;
+	struct amdgpu_framebuffer *afb;
+	struct dm_crtc_state *crtc_state;
+	struct amdgpu_crtc *acrtc;
+	struct dc *dc;
+
+	wb_conn = kunit_kzalloc(test, sizeof(*wb_conn), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, wb_conn);
+	conn_state = kunit_kzalloc(test, sizeof(*conn_state), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, conn_state);
+	job = kunit_kzalloc(test, sizeof(*job), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, job);
+	afb = kunit_kzalloc(test, sizeof(*afb), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, afb);
+	crtc_state = kunit_kzalloc(test, sizeof(*crtc_state), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, crtc_state);
+	acrtc = kunit_kzalloc(test, sizeof(*acrtc), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, acrtc);
+	dc = dm_kunit_alloc_dc_with_ctx(test);
+	dc->current_state = dm_kunit_alloc_dc_state(test);
+
+	adev->dm.adev = adev;
+	adev->dm.dc = dc;
+	wb_conn->encoder.crtc = &acrtc->base;
+	job->fb = &afb->base;
+	conn_state->writeback_job = job;
+	crtc_state->stream = dm_kunit_alloc_stream(test, NULL);
+
+	dm_set_writeback(&adev->dm, crtc_state, &wb_conn->base, conn_state);
+
+	KUNIT_EXPECT_NULL(test, acrtc->wb_conn);
+	KUNIT_EXPECT_FALSE(test, acrtc->wb_pending);
 }
 
 /* Tests for dm_update_mst_vcpi_slots_for_dsc() */
@@ -4538,6 +5143,35 @@ static void dm_test_initialize_plane_overlay(struct kunit *test)
 					       DRM_PLANE_TYPE_OVERLAY, plane_cap), 0);
 }
 
+/* Tests for dm_gpureset_toggle_interrupts() */
+
+/**
+ * dm_test_gpureset_toggle_interrupts_dcn - Test DCN only toggles the vupdate IRQ
+ * @test: The KUnit test context
+ */
+static void dm_test_gpureset_toggle_interrupts_dcn(struct kunit *test)
+{
+	struct amdgpu_device *adev = dm_kunit_alloc_adev(test);
+	struct dc_state *state = dm_kunit_alloc_dc_state(test);
+	struct amdgpu_crtc *acrtc;
+
+	KUNIT_ASSERT_NOT_NULL(test, state);
+	acrtc = kunit_kzalloc(test, sizeof(*acrtc), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, acrtc);
+
+	adev->ip_versions[DCE_HWIP][0] = IP_VERSION(3, 2, 0);
+	adev->mode_info.num_crtc = 1;
+	adev->mode_info.crtcs[0] = acrtc;
+	acrtc->base.dev = &adev->ddev;
+	acrtc->otg_inst = 0;
+	state->stream_count = 1;
+	state->stream_status[0].primary_otg_inst = 0;
+	state->stream_status[0].plane_count = 1;
+
+	/* GRPH_PFLIP is unused on DCN, so only the vupdate IRQ is touched. */
+	dm_gpureset_toggle_interrupts(adev, state, true);
+}
+
 static struct kunit_case amdgpu_dm_tests[] = {
 	/* Simple DM callbacks */
 	KUNIT_CASE(dm_test_wait_for_idle),
@@ -4558,6 +5192,8 @@ static struct kunit_case amdgpu_dm_tests[] = {
 	KUNIT_CASE(dm_test_plane_layer_index_cmp_equal),
 	KUNIT_CASE(dm_test_plane_layer_index_cmp_descending),
 	KUNIT_CASE(dm_test_plane_layer_index_cmp_ascending),
+	KUNIT_CASE(dm_test_update_planes_adapter_sorts_and_forwards),
+	KUNIT_CASE(dm_test_update_planes_adapter_propagates_failure),
 	/* fill_plane_color_attributes */
 	KUNIT_CASE(dm_test_fill_color_attr_rgb_format),
 	KUNIT_CASE(dm_test_fill_color_attr_bt601_full),
@@ -4688,9 +5324,12 @@ static struct kunit_case amdgpu_dm_tests[] = {
 	KUNIT_CASE(dm_test_atomic_setup_commit_color_mgmt),
 	KUNIT_CASE(dm_test_atomic_setup_commit_modeset),
 	KUNIT_CASE(dm_test_atomic_setup_commit_bad_lut),
+	KUNIT_CASE(dm_test_atomic_check_empty),
 	KUNIT_CASE(dm_test_aquire_global_lock_no_crtc),
 	KUNIT_CASE(dm_test_aquire_global_lock_no_commit),
 	KUNIT_CASE(dm_test_aquire_global_lock_waits_commit),
+	KUNIT_CASE(dm_test_update_crtc_state_unchanged),
+	KUNIT_CASE(dm_test_update_plane_state_detached),
 	KUNIT_CASE(dm_test_mod_power_update_streams_empty),
 	KUNIT_CASE(dm_test_mod_power_update_streams_no_modeset),
 	KUNIT_CASE(dm_test_mod_power_update_streams_enable),
@@ -4708,6 +5347,8 @@ static struct kunit_case amdgpu_dm_tests[] = {
 	KUNIT_CASE(dm_test_early_fini_audio_disabled),
 	KUNIT_CASE(dm_test_sw_fini_releases_state),
 	KUNIT_CASE(dm_test_oem_i2c_hw_init_no_device),
+	KUNIT_CASE(dm_test_resume_mst_no_primary),
+	KUNIT_CASE(dm_test_s3_handle_mst_empty),
 	KUNIT_CASE(dm_test_gpureset_commit_state_no_streams),
 	KUNIT_CASE(dm_test_emulated_link_detect_bad_signal),
 	/* mmhub_read_system_context */
@@ -4725,11 +5366,30 @@ static struct kunit_case amdgpu_dm_tests[] = {
 	KUNIT_CASE(dm_test_plane_info_bad_color_encoding),
 	KUNIT_CASE(dm_test_plane_info_rotations),
 	KUNIT_CASE(dm_test_plane_info_layer_and_blending),
+	/* amdgpu_dm_enable_self_refresh */
+	KUNIT_CASE(dm_test_self_refresh_full_update),
+	KUNIT_CASE(dm_test_self_refresh_unsupported_link),
+	KUNIT_CASE(dm_test_self_refresh_decrements_skip_count),
+	KUNIT_CASE(dm_test_self_refresh_allows_entry),
+	KUNIT_CASE(dm_test_self_refresh_within_settle_window),
+	KUNIT_CASE(dm_test_self_refresh_replay_link),
+	/* manage_dm_interrupts */
+	KUNIT_CASE(dm_test_manage_interrupts_offdelay),
+	KUNIT_CASE(dm_test_manage_interrupts_offdelay_fallback),
+	KUNIT_CASE(dm_test_manage_interrupts_apu_instant_off),
+	KUNIT_CASE(dm_test_manage_interrupts_disable),
 	/* dm_early_init */
 	KUNIT_CASE(dm_test_early_init_no_object_header),
 	KUNIT_CASE(dm_test_early_init_legacy_asics),
 	KUNIT_CASE(dm_test_early_init_dcn_versions),
 	KUNIT_CASE(dm_test_early_init_unsupported_version),
+	/* suspend and resume helpers */
+	KUNIT_CASE(dm_test_commit_zero_streams_empty),
+	KUNIT_CASE(dm_test_cache_state_empty_device),
+	KUNIT_CASE(dm_test_cache_state_error),
+	KUNIT_CASE(dm_test_destroy_cached_state_none),
+	KUNIT_CASE(dm_test_clear_writeback_removes_stream),
+	KUNIT_CASE(dm_test_set_writeback_no_pipe),
 	/* dm_update_mst_vcpi_slots_for_dsc */
 	KUNIT_CASE(dm_test_mst_vcpi_slots_no_connector),
 	KUNIT_CASE(dm_test_mst_vcpi_slots_skips_writeback),
@@ -4759,6 +5419,8 @@ static struct kunit_case amdgpu_dm_tests[] = {
 	/* initialize_plane */
 	KUNIT_CASE(dm_test_initialize_plane_primary),
 	KUNIT_CASE(dm_test_initialize_plane_overlay),
+	/* dm_gpureset_toggle_interrupts */
+	KUNIT_CASE(dm_test_gpureset_toggle_interrupts_dcn),
 	{}
 };
 

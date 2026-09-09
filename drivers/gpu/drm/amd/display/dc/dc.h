@@ -43,7 +43,7 @@
 #include "inc/hw/dmcu.h"
 #include "dml/display_mode_lib.h"
 
-#include "dml2_0/dml2_wrapper.h"
+#include "dml2_wrapper/dml2_wrapper.h"
 
 #include "dmub/inc/dmub_cmd.h"
 
@@ -66,7 +66,7 @@ struct dcn_dsc_reg_state;
 struct dcn_optc_reg_state;
 struct dcn_dccg_reg_state;
 
-#define DC_VER "3.2.396"
+#define DC_VER "3.2.397"
 
 /**
  * MAX_SURFACES - representative of the upper bound of surfaces that can be piped to a single CRTC
@@ -584,6 +584,7 @@ struct dc_config {
 	bool forced_clocks;
 	union allow_lttpr_non_transparent_mode allow_lttpr_non_transparent_mode;
 	bool multi_mon_pp_mclk_switch;
+	bool lsdma_peak_bw_contention_support;
 	bool disable_dmcu;
 	bool allow_4to1MPC;
 	bool enable_windowed_mpo_odm;
@@ -1291,6 +1292,7 @@ struct dc_debug_options {
 	uint32_t dml21_disable_pstate_method_mask;
 	union fw_assisted_mclk_switch_version fams_version;
 	union dmub_fams2_global_feature_config fams2_config;
+	bool fams2_imm_restore_drr;
 	unsigned int force_cositing;
 	unsigned int disable_spl;
 	unsigned int force_easf;
